@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "app.vercel.telecloud_jrn.twa",
+        "sha256_cert_fingerprints": ["7F:3F:40:EB:23:DD:81:77:0B:B2:3A:92:C6:41:9B:8D:41:81:D2:D1:45:0C:2A:92:B9:B3:0E:69:EC:B9:7B:3E"]
+      }
+    }]
