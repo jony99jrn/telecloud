@@ -50,19 +50,42 @@ const fmtDay = (ts) => new Date(ts).toLocaleDateString('en-GB', { day: 'numeric'
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const BADGE = { C: 'C', 'C++': 'C++', Java: 'Java', Python: 'Py', JavaScript: 'JS', SQL: 'SQL', 'HTML/CSS': 'HTML', Other: 'Txt' };
 
-async function copyText(text) {
+// Accepts text or a promise of text. Returns true if the text reached the clipboard.
+async function copyText(src) {
+  // A promise inside ClipboardItem keeps the tap permission while a long download finishes
+  if (typeof src !== 'string' && navigator.clipboard && window.ClipboardItem) {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'text/plain': Promise.resolve(src).then((t) => new Blob([t], { type: 'text/plain' })) }),
+      ]);
+      return true;
+    } catch (e) {
+      /* try the next way */
+    }
+  }
+  const text = await Promise.resolve(src);
   try {
     await navigator.clipboard.writeText(text);
+    return true;
   } catch (e) {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
+    /* try the old way */
   }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (e) {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
 }
 
 function modal({ title, text, input, confirm = 'OK', placeholder = '', noCancel = false }) {
@@ -429,12 +452,28 @@ async function renderFolder(fid, entryId) {
         <button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy code</button></div></div>`
       )
       .join('')}</div>`;
+    // the whole card opens the entry, not just the Open button
+    $('#out').querySelectorAll('.entry').forEach((c) => {
+      const go = () => (location.hash = `#/f/${fid}/e/${c.dataset.id}`);
+      c.tabIndex = 0;
+      c.setAttribute('role', 'link');
+      c.onclick = (ev) => {
+        if (ev.target.closest('a,button')) return;
+        go();
+      };
+      c.onkeydown = (ev) => {
+        if (ev.target === c && (ev.key === 'Enter' || ev.key === ' ')) {
+          ev.preventDefault();
+          go();
+        }
+      };
+    });
     $('#out').querySelectorAll('[data-copy]').forEach((b) => {
       b.onclick = async () => {
         const e = entries.find((x) => x.id === b.dataset.copy);
         try {
-          await copyText(await tg.getCode(e));
-          toast('Code copied');
+          const ok = await copyText(tg.getCode(e));
+          toast(ok ? 'Code copied' : 'Could not copy. Open the entry and select the code.');
         } catch (err) {
           toast('Could not read this code. ' + tg.friendlyError(err));
         }
@@ -463,11 +502,11 @@ async function openViewer(folder, entry) {
     <span class="v-lang">${esc(entry.lang)}</span>
     <div class="v-btns">
       ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & images' : ''}</button>` : ''}
-      <button class="vbtn" data-minus aria-label="Smaller text">A−</button>
-      <button class="vbtn" data-plus aria-label="Bigger text">A+</button>
-      <button class="vbtn primary" data-copyall>${I.copy}Copy all code</button>
-      <button class="vbtn" data-del aria-label="Delete entry">${I.trash}</button>
-      <button class="vbtn" data-close>${I.x}Close</button></div></div>
+      <button class="vbtn sq" data-minus aria-label="Smaller text">A−</button>
+      <button class="vbtn sq" data-plus aria-label="Bigger text">A+</button>
+      <button class="vbtn primary grow" data-copyall>${I.copy}<span>Copy code</span></button>
+      <button class="vbtn sq" data-del aria-label="Delete entry">${I.trash}</button>
+      <button class="vbtn grow" data-close>${I.x}<span>Close</span></button></div></div>
     <div class="v-body"><div class="v-code" id="vcode"><div class="loading" style="color:#a8bbd0">Loading code…</div></div>
     <aside class="v-side" id="vside" hidden></aside></div>`;
   document.body.appendChild(v);
@@ -527,12 +566,17 @@ async function openViewer(folder, entry) {
     if (entry.question && window.innerWidth > 900) sideBtn.click();
   }
 
+  $('[data-copyall]', v).onclick = async () => {
+    try {
+      const ok = await copyText(tg.getCode(entry));
+      toast(ok ? 'All code copied' : 'Could not copy. Press and hold on the code to select it.');
+    } catch (err) {
+      toast('Could not read this code. ' + tg.friendlyError(err));
+    }
+  };
+
   try {
     const code = await tg.getCode(entry);
-    $('[data-copyall]', v).onclick = async () => {
-      await copyText(code);
-      toast('All code copied');
-    };
     const lines = highlightLines(code, entry.lang);
     $('#vcode', v).innerHTML = lines
       .map((html, i) => `<div class="ln"><span class="no">${i + 1}</span><span class="tx">${html || ' '}</span></div>`)
