@@ -15,7 +15,7 @@
 
 **Code Vault** is a lightweight web app that turns your own Telegram account into a free, private vault for your coursework code. Create folders, save code files with the question and screenshots, and find everything again later from any browser on Android or Windows. Nothing is stored on a third-party server.
 
-🔗 **Live app:** [telecloud-six.vercel.app](https://telecloud-six.vercel.app)
+🔗 **Live app:** [telecloud-jrn.vercel.app](https://telecloud-jrn.vercel.app)
 
 ---
 
@@ -66,10 +66,6 @@
 </p>
 
 <p align="center"><sub>Login · Folders · Entries · New Entry · Code Viewer · Search</sub></p>
-
----:|:---:|:---:|
-| <img src="screenshots/login.jpg" width="230" alt="Login"/><br/>**Login** | <img src="screenshots/folders.jpg" width="230" alt="Folders"/><br/>**Folders** | <img src="screenshots/entries.jpg" width="230" alt="Entries"/><br/>**Entries** |
-| <img src="screenshots/new-entry.jpg" width="230" alt="New Entry"/><br/>**New Entry** | <img src="screenshots/viewer.jpg" width="230" alt="Code Viewer"/><br/>**Code Viewer** | <img src="screenshots/search.jpg" width="230" alt="Search"/><br/>**Search** |
 
 ---
 
