@@ -1,0 +1,12 @@
+{
+  "name": "Code Vault",
+  "short_name": "Code Vault",
+  "description": "Store your coursework code in your own private Telegram channels.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#bfe0f6",
+  "theme_color": "#86c3ee",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
