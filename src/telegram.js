@@ -167,15 +167,44 @@ export async function listFolders() {
 }
 
 export async function createFolder(name) {
-  const res = await client.invoke(
-    new Api.channels.CreateChannel({
-      title: PREFIX + name,
-      about: 'Code Vault folder. Created by Code Vault.',
-      broadcast: true,
-    })
-  );
-  const ch = res.chats[0];
-  return { id: String(ch.id), entity: ch, name, count: 0, last: null };
+  const clean = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  if (!clean) throw new Error('Please type a folder name.');
+  if (!client) throw new Error('Not connected to Telegram. Please sign in again.');
+  if (!client.connected) await client.connect();
+
+  // GramJS silently sleeps on short FLOOD_WAITs, which made the button look dead.
+  // Channel creation is heavily rate limited by Telegram, so show the wait instead.
+  const oldThreshold = client.floodSleepThreshold;
+  client.floodSleepThreshold = 0;
+  let res;
+  try {
+    res = await client.invoke(
+      new Api.channels.CreateChannel({
+        title: PREFIX + clean,
+        about: 'Code Vault folder. Created by Code Vault.',
+        broadcast: true,
+        megagroup: false,
+      })
+    );
+  } finally {
+    client.floodSleepThreshold = oldThreshold;
+  }
+
+  const chats = res?.chats || res?.updates?.chats || [];
+  const ch = chats.find((c) => c.className === 'Channel');
+  if (!ch) throw new Error('Telegram did not confirm the new channel. Open Telegram and check, then press Try again.');
+
+  // make sure the channel really exists and is reachable before we show it
+  try {
+    await client.invoke(
+      new Api.channels.GetChannels({
+        id: [new Api.InputChannel({ channelId: ch.id, accessHash: ch.accessHash })],
+      })
+    );
+  } catch (e) {
+    console.warn('verify failed', e);
+  }
+  return { id: String(ch.id), entity: ch, name: clean, count: 0, last: null };
 }
 
 export async function deleteFolder(folder) {
@@ -342,6 +371,11 @@ export function friendlyError(e) {
     PHONE_NUMBER_BANNED: 'Telegram says this phone number is banned.',
     CHANNELS_TOO_MUCH: 'Your Telegram account has too many channels. Leave or delete some first.',
     AUTH_KEY_UNREGISTERED: 'Your session has ended. Please sign in again.',
+    USER_CHANNELS_TOO_MUCH: 'Your Telegram account has too many channels. Leave or delete some first.',
+    CHANNELS_ADMIN_LOCATED_TOO_MUCH: 'Telegram says you own too many channels. Delete some first.',
+    USER_RESTRICTED: 'Telegram has restricted this account from creating channels (often spam limits on new accounts). Try again later.',
+    CHAT_TITLE_EMPTY: 'Please type a folder name.',
+    CHAT_ABOUT_TOO_LONG: 'The channel description is too long.',
   };
   if (/^FLOOD/.test(m) || /FLOOD_WAIT/.test(m)) {
     const secs = (m.match(/\d+/) || [''])[0];

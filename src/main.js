@@ -29,12 +29,16 @@ const I = {
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>',
 };
 
-function toast(msg) {
+function toast(msg, ms = 2200) {
   const t = $('#toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => t.classList.remove('show'), 2200);
+  if (ms > 0) toast.t = setTimeout(() => t.classList.remove('show'), ms);
+}
+function hideToast() {
+  clearTimeout(toast.t);
+  $('#toast').classList.remove('show');
 }
 
 function fmtDate(ts) {
@@ -61,13 +65,13 @@ async function copyText(text) {
   }
 }
 
-function modal({ title, text, input, confirm = 'OK', placeholder = '' }) {
+function modal({ title, text, input, confirm = 'OK', placeholder = '', noCancel = false }) {
   return new Promise((resolve) => {
     const back = document.createElement('div');
     back.className = 'modal-back';
     back.innerHTML = `<form class="modal"><h3>${esc(title)}</h3>${text ? `<p>${esc(text)}</p>` : ''}
       ${input ? `<input class="in" name="v" maxlength="60" placeholder="${esc(placeholder)}" autocomplete="off" />` : ''}
-      <div class="btns"><button type="button" class="btn btn-light btn-small" data-x>Cancel</button>
+      <div class="btns">${noCancel ? '' : '<button type="button" class="btn btn-light btn-small" data-x>Cancel</button>'}
       <button class="btn btn-small">${esc(confirm)}</button></div></form>`;
     document.body.appendChild(back);
     const field = $('input', back);
@@ -76,7 +80,8 @@ function modal({ title, text, input, confirm = 'OK', placeholder = '' }) {
       back.remove();
       resolve(v);
     };
-    $('[data-x]', back).onclick = () => done(null);
+    const x = $('[data-x]', back);
+    if (x) x.onclick = () => done(null);
     back.addEventListener('mousedown', (e) => e.target === back && done(null));
     $('form', back).onsubmit = (e) => {
       e.preventDefault();
@@ -296,16 +301,28 @@ function folderCard(f) {
     <div class="info"><h3>${esc(f.name)}</h3><div class="meta">${meta}</div></div><span class="chev">${I.chev}</span></a>`;
 }
 
+let creating = false;
 async function newFolder() {
+  if (creating) return;
   const name = await modal({ title: 'New folder', text: 'This creates a private channel in your Telegram.', input: true, placeholder: 'e.g. Data Structures', confirm: 'Create' });
   if (!name) return;
+  creating = true;
+  document.querySelectorAll('[data-newfolder],[data-newfolder2]').forEach((b) => b.setAttribute('disabled', ''));
+  toast('Creating channel in Telegram…', 0);
   try {
-    toast('Creating folder…');
     const f = await tg.createFolder(name);
-    S.folders = [f, ...(S.folders || [])];
+    hideToast();
+    S.folders = [f, ...(S.folders || []).filter((x) => x.id !== f.id)];
+    S.entries[f.id] = [];
+    toast('Folder created in Telegram');
     location.hash = `#/f/${f.id}`;
   } catch (e) {
-    toast(tg.friendlyError(e));
+    console.error('createFolder failed', e);
+    hideToast();
+    await modal({ title: 'Folder was not created', text: tg.friendlyError(e), confirm: 'OK', noCancel: true });
+  } finally {
+    creating = false;
+    document.querySelectorAll('[data-newfolder],[data-newfolder2]').forEach((b) => b.removeAttribute('disabled'));
   }
 }
 
