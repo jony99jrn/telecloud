@@ -696,3 +696,8 @@ window.addEventListener('hashchange', route);
   }
   route();
 })();
+
+// Offline-friendly shell and installable app (needed for the Android APK)
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
