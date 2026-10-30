@@ -521,7 +521,7 @@ async function openViewer(folder, entry) {
 ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & images' : ''}</button>` : ''}
 <button class="vbtn sq" data-minus aria-label="Smaller text">A−</button>
 <button class="vbtn sq" data-plus aria-label="Bigger text">A+</button>
-<button class="vbtn primary grow" data-copyall>${I.copy}<span>Copy code</span></button>
+<button class="vbtn primary grow" data-copyall>${I.copy}<span>Copy </span></button>
 <button class="vbtn sq" data-edit aria-label="Edit entry">${I.edit}</button>
 <button class="vbtn sq" data-del aria-label="Delete entry">${I.trash}</button>
 <button class="vbtn grow" data-close>${I.x}<span>Close</span></button></div></div>
