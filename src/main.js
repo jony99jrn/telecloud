@@ -524,7 +524,7 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
 <button class="vbtn primary grow" data-copyall>${I.copy}<span>Copy </span></button>
 <button class="vbtn sq" data-edit aria-label="Edit entry">${I.edit}</button>
 <button class="vbtn sq" data-del aria-label="Delete entry">${I.trash}</button>
-<button class="vbtn grow" data-close>${I.x}<span>Close</span></button></div></div>
+<button class="vbtn sq" data-close aria-label="Close">${I.x}</button></div></div>
 <div class="v-body"><div class="v-code" id="vcode"><div class="loading" style="color:#a8bbd0">Loading code…</div></div>
 <aside class="v-side" id="vside" hidden></aside></div>`;
   document.body.appendChild(v);
