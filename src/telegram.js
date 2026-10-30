@@ -1,10 +1,10 @@
 // Telegram storage layer for Code Vault.
 //
 // Layout inside your own Telegram account:
-//   folder  = a private channel whose title starts with "CV · "
-//   entry   = 1 document message  (the code file, caption "#cv {json}")
-//           + 1 optional text message  ("#cvq <id>" + the question)
-//           + 1 optional photo/album   (caption "#cvi <id>", the screenshots)
+//   folder = a private channel whose title starts with "CV · "
+//   entry  = 1 document message (the code file, caption "#cv {json}")
+//          + 1 optional text message ("#cvq <id>" + the question)
+//          + 1 optional photo/album (caption "#cvi <id>", the screenshots)
 
 import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions';
@@ -236,6 +236,7 @@ export async function loadEntries(folder) {
           codeMsg: m,
           msgIds: [m.id],
           question: '',
+          qMsgId: null,
           shots: [],
           code: null,
         });
@@ -261,6 +262,7 @@ export async function loadEntries(folder) {
     const e = entries.get(id);
     if (e) {
       e.question = q.text;
+      e.qMsgId = q.msgId;
       e.msgIds.push(q.msgId);
     }
   }
@@ -325,11 +327,9 @@ export async function addEntry(folder, { title, question, lang, tags, files, cod
     caption: '#cv ' + JSON.stringify(meta),
     forceDocument: true,
   });
-
   if (question.trim()) {
     await client.sendMessage(folder.entity, { message: `#cvq ${id}\n${question.trim().slice(0, 3900)}` });
   }
-
   if (files.length) {
     const cfs = [];
     for (let i = 0; i < files.length; i++) {
@@ -358,6 +358,87 @@ export async function getCode(entry) {
 export async function getShotUrl(msg) {
   const buf = await client.downloadMedia(msg, {});
   return URL.createObjectURL(new Blob([buf], { type: 'image/jpeg' }));
+}
+
+/* ---------- editing an entry ---------- */
+
+async function safeEdit(entity, params) {
+  try {
+    return await client.editMessage(entity, params);
+  } catch (e) {
+    if ((e?.errorMessage || e?.message || '').includes('MESSAGE_NOT_MODIFIED')) return null;
+    throw e;
+  }
+}
+
+export async function editEntry(folder, entry, { title, question, lang, tags, code, newFiles, keepShotIds }) {
+  const id = entry.id;
+  const ent = folder.entity;
+  const oldCode = await getCode(entry);
+
+  // question
+  const q = question.trim().slice(0, 3900);
+  if (entry.qMsgId && !q) {
+    await client.deleteMessages(ent, [entry.qMsgId], { revoke: true });
+  } else if (entry.qMsgId && q !== entry.question.trim()) {
+    await safeEdit(ent, { message: entry.qMsgId, text: `#cvq ${id}\n${q}` });
+  } else if (!entry.qMsgId && q) {
+    await client.sendMessage(ent, { message: `#cvq ${id}\n${q}` });
+  }
+
+  // screenshots: remove the ones you deleted, keep the rest
+  const keep = new Set(keepShotIds);
+  const removed = entry.shots.filter((m) => !keep.has(m.id));
+  const kept = entry.shots.filter((m) => keep.has(m.id));
+  if (removed.length) await client.deleteMessages(ent, removed.map((m) => m.id), { revoke: true });
+
+  // every remaining album must still carry the #cvi caption
+  const tag = `#cvi ${id}`;
+  const groups = new Map();
+  for (const m of kept) {
+    const k = m.groupedId ? String(m.groupedId) : 's' + m.id;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(m);
+  }
+  for (const list of groups.values()) {
+    if (!list.some((m) => (m.message || '') === tag)) {
+      await safeEdit(ent, { message: list[0].id, text: tag });
+    }
+  }
+
+  // new screenshots
+  if (newFiles.length) {
+    const cfs = [];
+    for (let i = 0; i < newFiles.length; i++) {
+      const b = await shrinkImage(newFiles[i]);
+      cfs.push(new CustomFile(`shot-${Date.now()}-${i + 1}.jpg`, b.length, '', b));
+    }
+    await client.sendFile(ent, { file: cfs.length === 1 ? cfs[0] : cfs, caption: tag });
+  }
+
+  // code message: caption (title, language, tags) and the file itself
+  const meta = {
+    id,
+    t: title.slice(0, 120),
+    l: lang,
+    g: tags.slice(0, 8).map((t) => t.slice(0, 24)),
+    ts: entry.ts,
+    n: code.split('\n').length,
+    s: kept.length + newFiles.length,
+  };
+  const caption = '#cv ' + JSON.stringify(meta);
+  if (code !== oldCode || title !== entry.title || lang !== entry.lang) {
+    const buf = Buffer.from(code, 'utf8');
+    const name = `${slug(title)}.${EXT[lang] || 'txt'}`;
+    await safeEdit(ent, {
+      message: entry.codeMsg.id,
+      text: caption,
+      file: new CustomFile(name, buf.length, '', buf),
+      forceDocument: true,
+    });
+  } else {
+    await safeEdit(ent, { message: entry.codeMsg.id, text: caption });
+  }
 }
 
 export function friendlyError(e) {

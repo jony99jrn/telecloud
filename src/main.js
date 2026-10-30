@@ -3,6 +3,7 @@ import * as tg from './telegram.js';
 import { highlightLines } from './highlight.js';
 
 /* ---------- tiny helpers ---------- */
+
 const app = document.getElementById('app');
 const esc = (s) =>
   String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -27,6 +28,7 @@ const I = {
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 015.5 5H9l2 2.5h7.5A2.5 2.5 0 0121 10v7.5a2.5 2.5 0 01-2.5 2.5h-13A2.5 2.5 0 013 17.5z"/></svg>',
   chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg>',
 };
 
 function toast(msg, ms = 2200) {
@@ -36,6 +38,7 @@ function toast(msg, ms = 2200) {
   clearTimeout(toast.t);
   if (ms > 0) toast.t = setTimeout(() => t.classList.remove('show'), ms);
 }
+
 function hideToast() {
   clearTimeout(toast.t);
   $('#toast').classList.remove('show');
@@ -46,6 +49,7 @@ function fmtDate(ts) {
     .toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })
     .replace(/\b(am|pm)\b/, (m) => m.toUpperCase());
 }
+
 const fmtDay = (ts) => new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const BADGE = { C: 'C', 'C++': 'C++', Java: 'Java', Python: 'Py', JavaScript: 'JS', SQL: 'SQL', 'HTML/CSS': 'HTML', Other: 'Txt' };
@@ -93,9 +97,9 @@ function modal({ title, text, input, confirm = 'OK', placeholder = '', noCancel 
     const back = document.createElement('div');
     back.className = 'modal-back';
     back.innerHTML = `<form class="modal"><h3>${esc(title)}</h3>${text ? `<p>${esc(text)}</p>` : ''}
-      ${input ? `<input class="in" name="v" maxlength="60" placeholder="${esc(placeholder)}" autocomplete="off" />` : ''}
-      <div class="btns">${noCancel ? '' : '<button type="button" class="btn btn-light btn-small" data-x>Cancel</button>'}
-      <button class="btn btn-small">${esc(confirm)}</button></div></form>`;
+${input ? `<input class="in" name="v" maxlength="60" placeholder="${esc(placeholder)}" autocomplete="off" />` : ''}
+<div class="btns">${noCancel ? '' : '<button type="button" class="btn btn-light btn-small" data-x>Cancel</button>'}
+<button class="btn btn-small">${esc(confirm)}</button></div></form>`;
     document.body.appendChild(back);
     const field = $('input', back);
     if (field) field.focus();
@@ -114,12 +118,14 @@ function modal({ title, text, input, confirm = 'OK', placeholder = '', noCancel 
 }
 
 /* ---------- state ---------- */
+
 const S = { authed: false, folders: null, entries: {}, cleanup: null };
 
 function header(extra = '') {
   return `<div class="topbar"><a class="brand" href="#/"><span class="logo">${I.logo}</span>Code Vault</a>
-    <div class="top-actions"><span class="pill"><span class="dot"></span><span class="long">Connected to Telegram</span><span class="short">Connected</span></span>${extra}</div></div>`;
+<div class="top-actions"><span class="pill"><span class="dot"></span><span class="long">Connected to Telegram</span><span class="short">Connected</span></span>${extra}</div></div>`;
 }
+
 function topActions() {
   return `<button class="pill-btn so" data-signout>Sign out</button>`;
 }
@@ -150,6 +156,7 @@ function bindShared(root) {
 }
 
 /* ================= LOGIN ================= */
+
 const L = { step: 1, phone: '', error: '' };
 
 function renderLogin(busy = false) {
@@ -164,8 +171,8 @@ function renderLogin(busy = false) {
     title = 'Connect your Telegram';
     lead = 'Your folders are private channels in your own Telegram account. Enter the API keys from my.telegram.org.';
     body = `<label class="field">${I.key}<input id="f-id" inputmode="numeric" placeholder="API ID" value="${keys.apiId || ''}" autocomplete="off" /></label>
-      <label class="field">${I.lock}<input id="f-hash" type="password" placeholder="API Hash" value="${esc(keys.apiHash)}" autocomplete="off" />
-      <button type="button" class="eye" data-eye aria-label="Show or hide">${I.eye}</button></label>`;
+<label class="field">${I.lock}<input id="f-hash" type="password" placeholder="API Hash" value="${esc(keys.apiHash)}" autocomplete="off" />
+<button type="button" class="eye" data-eye aria-label="Show or hide">${I.eye}</button></label>`;
   } else if (L.step === 2) {
     title = 'Your phone number';
     lead = 'Telegram will send a login code to your Telegram app. Use the international format.';
@@ -178,37 +185,39 @@ function renderLogin(busy = false) {
     title = 'Two-step password';
     lead = 'Your account has a two-step verification password. Enter it to finish.';
     body = `<label class="field">${I.lock}<input id="f-pw" type="password" placeholder="Telegram password" autocomplete="current-password" />
-      <button type="button" class="eye" data-eye aria-label="Show or hide">${I.eye}</button></label>`;
+<button type="button" class="eye" data-eye aria-label="Show or hide">${I.eye}</button></label>`;
     cta = 'Finish';
   }
 
   app.innerHTML = `<div class="login-wrap">
-    <div class="login-top brand"><span class="logo">${I.logo}</span>Code Vault</div>
-    <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
-    <form class="login-card" id="login-form">
-      <div class="login-icon">${I.enter}</div>
-      <h1>${title}</h1><p class="lead">${lead}</p>
-      ${body}
-      ${L.error ? `<div class="err">${esc(L.error)}</div>` : ''}
-      <button class="btn btn-full" id="go" ${busy ? 'disabled' : ''} style="height:54px;border-radius:18px">${busy ? 'Please wait…' : cta}</button>
-      ${
-        L.step === 1
-          ? `<div class="divider">Where do I find these?</div>
-             <a class="ext" href="https://my.telegram.org" target="_blank" rel="noopener">${I.ext}Open my.telegram.org</a>`
-          : `<div style="margin-top:12px"><button type="button" class="link-btn" data-back>Back</button></div>`
-      }
-      <div class="steps">${dots}</div>
-      <p class="step-note">Step ${L.step} of 4. Your keys stay on this device.</p>
-    </form></div>`;
+<div class="login-top brand"><span class="logo">${I.logo}</span>Code Vault</div>
+<span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
+<form class="login-card" id="login-form">
+<div class="login-icon">${I.enter}</div>
+<h1>${title}</h1><p class="lead">${lead}</p>
+${body}
+${L.error ? `<div class="err">${esc(L.error)}</div>` : ''}
+<button class="btn btn-full" id="go" ${busy ? 'disabled' : ''} style="height:54px;border-radius:18px">${busy ? 'Please wait…' : cta}</button>
+${
+  L.step === 1
+    ? `<div class="divider">Where do I find these?</div>
+<a class="ext" href="https://my.telegram.org" target="_blank" rel="noopener">${I.ext}Open my.telegram.org</a>`
+    : `<div style="margin-top:12px"><button type="button" class="link-btn" data-back>Back</button></div>`
+}
+<div class="steps">${dots}</div>
+<p class="step-note">Step ${L.step} of 4. Your keys stay on this device.</p>
+</form></div>`;
 
   const first = $('input', app);
   if (first && !busy) first.focus();
+
   const eye = $('[data-eye]', app);
   if (eye)
     eye.onclick = () => {
       const inp = eye.parentElement.querySelector('input');
       inp.type = inp.type === 'password' ? 'text' : 'password';
     };
+
   const back = $('[data-back]', app);
   if (back)
     back.onclick = () => {
@@ -268,13 +277,14 @@ async function finishLogin() {
 }
 
 /* ================= HOME ================= */
+
 async function renderHome() {
   app.innerHTML = `<div class="shell">${header(topActions())}
-    <div class="head-row"><div><h1 class="title">Your folders</h1>
-    <p class="sub">Each folder is a private channel in your Telegram. Open one to see your code.</p></div>
-    <button class="btn" data-newfolder>${I.plus}New folder</button></div>
-    <label class="searchbar">${I.search}<input id="q" placeholder="Search folders and code" autocomplete="off" /></label>
-    <div id="out"><div class="loading">Loading your folders…</div></div></div>`;
+<div class="head-row"><div><h1 class="title">Your folders</h1>
+<p class="sub">Each folder is a private channel in your Telegram. Open one to see your code.</p></div>
+<button class="btn" data-newfolder>${I.plus}New folder</button></div>
+<label class="searchbar">${I.search}<input id="q" placeholder="Search folders and code" autocomplete="off" /></label>
+<div id="out"><div class="loading">Loading your folders…</div></div></div>`;
   bindShared(app);
   $('[data-newfolder]').onclick = newFolder;
 
@@ -306,8 +316,8 @@ async function renderHome() {
           `<h2 class="section-title">Matching code</h2><div class="grid">${hits
             .map(
               ({ f, e }) => `<a class="card entry" href="#/f/${f.id}/e/${e.id}">
-              <div class="row"><span class="badge">${esc(BADGE[e.lang] || 'Txt')}</span><span class="date">${esc(f.name)}</span></div>
-              <h3>${esc(e.title)}</h3><div class="meta">${fmtDate(e.ts)}</div></a>`
+<div class="row"><span class="badge">${esc(BADGE[e.lang] || 'Txt')}</span><span class="date">${esc(f.name)}</span></div>
+<h3>${esc(e.title)}</h3><div class="meta">${fmtDate(e.ts)}</div></a>`
             )
             .join('')}</div>`
         );
@@ -320,8 +330,8 @@ async function renderHome() {
 function folderCard(f) {
   const meta = f.count ? `${plural(f.count, 'entry').replace('entrys', 'entries')} · updated ${fmtDay(f.last)}` : 'No entries yet';
   return `<a class="card folder" href="#/f/${f.id}">
-    <div class="row"><span class="ficon">${I.folder}</span><span class="badge">Channel</span></div>
-    <div class="info"><h3>${esc(f.name)}</h3><div class="meta">${meta}</div></div><span class="chev">${I.chev}</span></a>`;
+<div class="row"><span class="ficon">${I.folder}</span><span class="badge">Channel</span></div>
+<div class="info"><h3>${esc(f.name)}</h3><div class="meta">${meta}</div></div><span class="chev">${I.chev}</span></a>`;
 }
 
 let creating = false;
@@ -374,6 +384,7 @@ function matches(e, q) {
 }
 
 /* ================= FOLDER ================= */
+
 async function renderFolder(fid, entryId) {
   await ensureFolders().catch(() => {});
   const folder = (S.folders || []).find((f) => f.id === fid);
@@ -381,14 +392,15 @@ async function renderFolder(fid, entryId) {
     location.hash = '#/';
     return;
   }
+
   app.innerHTML = `<div class="shell">${header(topActions())}
-    <a class="back" href="#/">${I.back}All folders</a>
-    <div class="head-row"><div class="folder-head"><span class="ficon big">${I.folder}</span>
-    <div><h1>${esc(folder.name)}</h1><p id="count">Stored in a private Telegram channel.</p></div></div>
-    <a class="btn" href="#/f/${fid}/new">${I.plus}Add entry</a></div>
-    <label class="searchbar">${I.search}<input id="q" placeholder="Search by title, question, tag or code" autocomplete="off" /></label>
-    <div id="out"><div class="loading">Loading entries…</div></div>
-    <div class="footer-actions"><button class="link-btn danger" id="delfolder">Delete this folder</button></div></div>`;
+<a class="back" href="#/">${I.back}All folders</a>
+<div class="head-row"><div class="folder-head"><span class="ficon big">${I.folder}</span>
+<div><h1>${esc(folder.name)}</h1><p id="count">Stored in a private Telegram channel.</p></div></div>
+<a class="btn" href="#/f/${fid}/new">${I.plus}Add entry</a></div>
+<label class="searchbar">${I.search}<input id="q" placeholder="Search by title, question, tag or code" autocomplete="off" /></label>
+<div id="out"><div class="loading">Loading entries…</div></div>
+<div class="footer-actions"><button class="link-btn danger" id="delfolder">Delete this folder</button></div></div>`;
   bindShared(app);
 
   $('#delfolder').onclick = async () => {
@@ -444,14 +456,16 @@ async function renderFolder(fid, entryId) {
     $('#out').innerHTML = `<div class="grid">${list
       .map(
         (e) => `<div class="card entry" data-id="${e.id}">
-        <div class="row"><span class="badge">${esc(BADGE[e.lang] || 'Txt')}</span><span class="date">${fmtDate(e.ts)}</span></div>
-        <h3>${esc(e.title)}</h3>
-        <div class="meta">${plural(e.lines, 'line')}${e.shotCount ? ' · ' + plural(e.shotCount, 'screenshot') : ''}</div>
-        ${e.tags.length ? `<div class="tags">${e.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
-        <div class="actions"><a class="btn btn-light btn-small" href="#/f/${fid}/e/${e.id}">Open</a>
-        <button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy code</button></div></div>`
+<div class="row"><span class="badge">${esc(BADGE[e.lang] || 'Txt')}</span><span class="date">${fmtDate(e.ts)}</span></div>
+<h3>${esc(e.title)}</h3>
+<div class="meta">${plural(e.lines, 'line')}${e.shotCount ? ' · ' + plural(e.shotCount, 'screenshot') : ''}</div>
+${e.tags.length ? `<div class="tags">${e.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
+<div class="actions"><a class="btn btn-light btn-small" href="#/f/${fid}/e/${e.id}">Open</a>
+<a class="btn btn-light btn-small" href="#/f/${fid}/edit/${e.id}">${I.edit}Edit</a>
+<button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy code</button></div></div>`
       )
       .join('')}</div>`;
+
     // the whole card opens the entry, not just the Open button
     $('#out').querySelectorAll('.entry').forEach((c) => {
       const go = () => (location.hash = `#/f/${fid}/e/${c.dataset.id}`);
@@ -468,6 +482,7 @@ async function renderFolder(fid, entryId) {
         }
       };
     });
+
     $('#out').querySelectorAll('[data-copy]').forEach((b) => {
       b.onclick = async () => {
         const e = entries.find((x) => x.id === b.dataset.copy);
@@ -480,6 +495,7 @@ async function renderFolder(fid, entryId) {
       };
     });
   };
+
   $('#q').oninput = () => {
     loadCodes().then(draw);
     draw();
@@ -493,22 +509,24 @@ async function renderFolder(fid, entryId) {
 }
 
 /* ================= VIEWER (full screen) ================= */
+
 async function openViewer(folder, entry) {
   const v = document.createElement('div');
   v.className = 'viewer';
   const hasSide = !!entry.question || entry.shots.length > 0;
   v.innerHTML = `<div class="v-head"><span class="ficon">${I.folder}</span>
-    <div class="v-title"><b>${esc(entry.title)}</b><small>${esc(folder.name)} · ${fmtDate(entry.ts)}</small></div>
-    <span class="v-lang">${esc(entry.lang)}</span>
-    <div class="v-btns">
-      ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & images' : ''}</button>` : ''}
-      <button class="vbtn sq" data-minus aria-label="Smaller text">A−</button>
-      <button class="vbtn sq" data-plus aria-label="Bigger text">A+</button>
-      <button class="vbtn primary grow" data-copyall>${I.copy}<span>Copy code</span></button>
-      <button class="vbtn sq" data-del aria-label="Delete entry">${I.trash}</button>
-      <button class="vbtn grow" data-close>${I.x}<span>Close</span></button></div></div>
-    <div class="v-body"><div class="v-code" id="vcode"><div class="loading" style="color:#a8bbd0">Loading code…</div></div>
-    <aside class="v-side" id="vside" hidden></aside></div>`;
+<div class="v-title"><b>${esc(entry.title)}</b><small>${esc(folder.name)} · ${fmtDate(entry.ts)}</small></div>
+<span class="v-lang">${esc(entry.lang)}</span>
+<div class="v-btns">
+${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & images' : ''}</button>` : ''}
+<button class="vbtn sq" data-minus aria-label="Smaller text">A−</button>
+<button class="vbtn sq" data-plus aria-label="Bigger text">A+</button>
+<button class="vbtn primary grow" data-copyall>${I.copy}<span>Copy code</span></button>
+<button class="vbtn sq" data-edit aria-label="Edit entry">${I.edit}</button>
+<button class="vbtn sq" data-del aria-label="Delete entry">${I.trash}</button>
+<button class="vbtn grow" data-close>${I.x}<span>Close</span></button></div></div>
+<div class="v-body"><div class="v-code" id="vcode"><div class="loading" style="color:#a8bbd0">Loading code…</div></div>
+<aside class="v-side" id="vside" hidden></aside></div>`;
   document.body.appendChild(v);
   document.body.style.overflow = 'hidden';
 
@@ -521,13 +539,14 @@ async function openViewer(folder, entry) {
   $('[data-minus]', v).onclick = () => ((size = Math.max(10, size - 1)), applySize());
   $('[data-plus]', v).onclick = () => ((size = Math.min(30, size + 1)), applySize());
   $('[data-close]', v).onclick = () => (location.hash = `#/f/${folder.id}`);
-
   const onKey = (e) => e.key === 'Escape' && (location.hash = `#/f/${folder.id}`);
   document.addEventListener('keydown', onKey);
   v.cleanup = () => {
     document.removeEventListener('keydown', onKey);
     document.body.style.overflow = '';
   };
+
+  $('[data-edit]', v).onclick = () => (location.hash = `#/f/${folder.id}/edit/${entry.id}`);
 
   $('[data-del]', v).onclick = async () => {
     const ok = await modal({ title: 'Delete this entry?', text: 'It will also be removed from your Telegram channel.', confirm: 'Delete' });
@@ -587,6 +606,7 @@ async function openViewer(folder, entry) {
 }
 
 /* ================= NEW ENTRY ================= */
+
 async function renderNew(fid) {
   await ensureFolders().catch(() => {});
   const folder = (S.folders || []).find((f) => f.id === fid);
@@ -595,28 +615,29 @@ async function renderNew(fid) {
     return;
   }
   const files = [];
+
   app.innerHTML = `<div class="shell narrow">${header()}
-    <a class="back" href="#/f/${fid}">${I.back}${esc(folder.name)}</a>
-    <h1 class="title" style="margin-top:0">New entry</h1>
-    <p class="sub">It will be saved in your ${esc(folder.name)} channel. The date and time are added for you.</p>
-    <form class="card form-card" id="form">
-      <div class="block"><label class="lbl" for="t">Title</label><input class="in" id="t" maxlength="120" placeholder="e.g. Check whether a number is prime" required /></div>
-      <div class="block"><label class="lbl" for="q">Question <span>(optional)</span></label><textarea class="ta" id="q" placeholder="Paste the full question from your lab sheet or assignment"></textarea></div>
-      <div class="block two">
-        <div><label class="lbl" for="l">Language</label><select class="sel" id="l">${tg.LANGUAGES.map((l) => `<option>${esc(l)}</option>`).join('')}</select></div>
-        <div><label class="lbl" for="g">Tags <span>(optional, separate with commas)</span></label><input class="in" id="g" placeholder="e.g. loops, week 3, lab 2" /></div>
-      </div>
-      <div class="block"><label class="lbl">Screenshots <span>(optional)</span></label>
-        <div class="drop" id="drop"><span class="ui">${I.up}</span>
-          <div class="txt"><b>Drop images here, or paste with Ctrl+V</b><small>Images are shrunk before they are sent to Telegram.</small></div>
-          <button type="button" class="btn btn-light btn-small" id="browse">Browse files</button>
-          <input type="file" id="file" accept="image/*" multiple hidden /></div>
-        <div class="thumbs" id="thumbs"></div></div>
-      <div class="block"><label class="lbl" for="c">Code</label>
-        <textarea class="code-in" id="c" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Paste your code here. Indentation is kept exactly as you paste it." required></textarea></div>
-      <div class="form-foot"><small>Saving sends the code and your screenshots to the channel as one entry.</small>
-        <div class="btns"><a class="btn btn-light" href="#/f/${fid}">Cancel</a><button class="btn" id="save">${I.check}Save to Telegram</button></div></div>
-    </form></div>`;
+<a class="back" href="#/f/${fid}">${I.back}${esc(folder.name)}</a>
+<h1 class="title" style="margin-top:0">New entry</h1>
+<p class="sub">It will be saved in your ${esc(folder.name)} channel. The date and time are added for you.</p>
+<form class="card form-card" id="form">
+<div class="block"><label class="lbl" for="t">Title</label><input class="in" id="t" maxlength="120" placeholder="e.g. Check whether a number is prime" required /></div>
+<div class="block"><label class="lbl" for="q">Question <span>(optional)</span></label><textarea class="ta" id="q" placeholder="Paste the full question from your lab sheet or assignment"></textarea></div>
+<div class="block two">
+<div><label class="lbl" for="l">Language</label><select class="sel" id="l">${tg.LANGUAGES.map((l) => `<option>${esc(l)}</option>`).join('')}</select></div>
+<div><label class="lbl" for="g">Tags <span>(optional, separate with commas)</span></label><input class="in" id="g" placeholder="e.g. loops, week 3, lab 2" /></div>
+</div>
+<div class="block"><label class="lbl">Screenshots <span>(optional)</span></label>
+<div class="drop" id="drop"><span class="ui">${I.up}</span>
+<div class="txt"><b>Drop images here, or paste with Ctrl+V</b><small>Images are shrunk before they are sent to Telegram.</small></div>
+<button type="button" class="btn btn-light btn-small" id="browse">Browse files</button>
+<input type="file" id="file" accept="image/*" multiple hidden /></div>
+<div class="thumbs" id="thumbs"></div></div>
+<div class="block"><label class="lbl" for="c">Code</label>
+<textarea class="code-in" id="c" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Paste your code here. Indentation is kept exactly as you paste it." required></textarea></div>
+<div class="form-foot"><small>Saving sends the code and your screenshots to the channel as one entry.</small>
+<div class="btns"><a class="btn btn-light" href="#/f/${fid}">Cancel</a><button class="btn" id="save">${I.check}Save to Telegram</button></div></div>
+</form></div>`;
 
   const drawThumbs = () => {
     $('#thumbs').innerHTML = files
@@ -711,7 +732,169 @@ async function renderNew(fid) {
   };
 }
 
+/* ================= EDIT ENTRY ================= */
+
+async function renderEdit(fid, entryId) {
+  await ensureFolders().catch(() => {});
+  const folder = (S.folders || []).find((f) => f.id === fid);
+  if (!folder) {
+    location.hash = '#/';
+    return;
+  }
+  app.innerHTML = `<div class="shell narrow">${header()}<div class="loading">Loading entry…</div></div>`;
+
+  let entry, oldCode;
+  try {
+    if (!S.entries[fid]) S.entries[fid] = await tg.loadEntries(folder);
+    entry = S.entries[fid].find((e) => e.id === entryId);
+    if (entry) oldCode = await tg.getCode(entry);
+  } catch (e) {
+    toast(tg.friendlyError(e));
+  }
+  if (!entry || oldCode === undefined) {
+    location.hash = `#/f/${fid}`;
+    return;
+  }
+
+  const files = []; // new screenshots
+  const kept = entry.shots.map((m) => ({ m, url: '' })); // existing screenshots
+
+  app.innerHTML = `<div class="shell narrow">${header()}
+<a class="back" href="#/f/${fid}/e/${entryId}">${I.back}Back to entry</a>
+<h1 class="title" style="margin-top:0">Edit entry</h1>
+<p class="sub">Changes are saved to the same message in your ${esc(folder.name)} channel.</p>
+<form class="card form-card" id="form">
+<div class="block"><label class="lbl" for="t">Title</label><input class="in" id="t" maxlength="120" required /></div>
+<div class="block"><label class="lbl" for="q">Question <span>(optional)</span></label><textarea class="ta" id="q"></textarea></div>
+<div class="block two">
+<div><label class="lbl" for="l">Language</label><select class="sel" id="l">${tg.LANGUAGES.map((l) => `<option ${l === entry.lang ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+<div><label class="lbl" for="g">Tags <span>(optional, separate with commas)</span></label><input class="in" id="g" /></div>
+</div>
+<div class="block"><label class="lbl">Screenshots <span>(tap × to remove, or add more)</span></label>
+<div class="thumbs" id="thumbs"></div>
+<div class="drop" id="drop" style="margin-top:10px"><span class="ui">${I.up}</span>
+<div class="txt"><b>Add images</b><small>Images are shrunk before they are sent to Telegram.</small></div>
+<button type="button" class="btn btn-light btn-small" id="browse">Browse files</button>
+<input type="file" id="file" accept="image/*" multiple hidden /></div></div>
+<div class="block"><label class="lbl" for="c">Code</label>
+<textarea class="code-in" id="c" spellcheck="false" autocapitalize="off" autocomplete="off" required></textarea></div>
+<div class="form-foot"><small>Saving updates this entry in Telegram.</small>
+<div class="btns"><a class="btn btn-light" href="#/f/${fid}/e/${entryId}">Cancel</a><button class="btn" id="save">${I.check}Save changes</button></div></div>
+</form></div>`;
+
+  // fill values through JS so nothing gets mangled by HTML parsing
+  $('#t').value = entry.title;
+  $('#q').value = entry.question;
+  $('#g').value = entry.tags.join(', ');
+  $('#c').value = oldCode;
+
+  const drawThumbs = () => {
+    $('#thumbs').innerHTML =
+      kept
+        .map(
+          (k, i) =>
+            `<div class="thumb">${k.url ? `<img src="${k.url}" alt="" />` : '<div class="loading">…</div>'}<button type="button" data-rk="${i}" aria-label="Remove">×</button></div>`
+        )
+        .join('') +
+      files
+        .map((f, i) => `<div class="thumb"><img src="${f._url}" alt="" /><button type="button" data-rn="${i}" aria-label="Remove">×</button></div>`)
+        .join('');
+    $('#thumbs').querySelectorAll('[data-rk]').forEach((b) => {
+      b.onclick = () => {
+        kept.splice(+b.dataset.rk, 1);
+        drawThumbs();
+      };
+    });
+    $('#thumbs').querySelectorAll('[data-rn]').forEach((b) => {
+      b.onclick = () => {
+        URL.revokeObjectURL(files[+b.dataset.rn]._url);
+        files.splice(+b.dataset.rn, 1);
+        drawThumbs();
+      };
+    });
+  };
+  drawThumbs();
+  kept.forEach(async (k) => {
+    try {
+      k.url = await tg.getShotUrl(k.m);
+    } catch (e) {
+      /* leave blank */
+    }
+    if ($('#thumbs')) drawThumbs();
+  });
+
+  const addFiles = (list) => {
+    for (const f of list) {
+      if (!f.type.startsWith('image/')) continue;
+      if (files.length + kept.length >= 9) {
+        toast('You can have up to 9 screenshots');
+        break;
+      }
+      f._url = URL.createObjectURL(f);
+      files.push(f);
+    }
+    drawThumbs();
+  };
+  $('#browse').onclick = () => $('#file').click();
+  $('#file').onchange = (e) => {
+    addFiles([...e.target.files]);
+    e.target.value = '';
+  };
+  const onPaste = (e) => {
+    const imgs = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+    if (imgs.length) {
+      e.preventDefault();
+      addFiles(imgs);
+    }
+  };
+  document.addEventListener('paste', onPaste);
+  S.cleanup = () => {
+    document.removeEventListener('paste', onPaste);
+    files.forEach((f) => URL.revokeObjectURL(f._url));
+    kept.forEach((k) => k.url && URL.revokeObjectURL(k.url));
+  };
+
+  $('#c').addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const t = e.target;
+      const s = t.selectionStart;
+      t.value = t.value.slice(0, s) + '    ' + t.value.slice(t.selectionEnd);
+      t.selectionStart = t.selectionEnd = s + 4;
+    }
+  });
+
+  $('#form').onsubmit = async (e) => {
+    e.preventDefault();
+    const code = $('#c').value.replace(/\r\n/g, '\n');
+    const title = $('#t').value.trim();
+    if (!title || !code.trim()) return toast('Add a title and some code first');
+    const btn = $('#save');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      await tg.editEntry(folder, entry, {
+        title,
+        question: $('#q').value,
+        lang: $('#l').value,
+        tags: $('#g').value.split(',').map((s) => s.trim()).filter(Boolean),
+        code,
+        newFiles: files,
+        keepShotIds: kept.map((k) => k.m.id),
+      });
+      delete S.entries[fid];
+      toast('Changes saved to Telegram');
+      location.hash = `#/f/${fid}/e/${entryId}`;
+    } catch (err) {
+      btn.disabled = false;
+      btn.innerHTML = `${I.check}Save changes`;
+      toast(tg.friendlyError(err));
+    }
+  };
+}
+
 /* ================= ROUTER ================= */
+
 function route() {
   document.querySelectorAll('.viewer').forEach((v) => {
     v.cleanup?.();
@@ -726,6 +909,7 @@ function route() {
   const p = location.hash.replace(/^#\/?/, '').split('/');
   if (p[0] === 'f' && p[1]) {
     if (p[2] === 'new') return renderNew(p[1]);
+    if (p[2] === 'edit' && p[3]) return renderEdit(p[1], p[3]);
     return renderFolder(p[1], p[2] === 'e' ? p[3] : null);
   }
   renderHome();
