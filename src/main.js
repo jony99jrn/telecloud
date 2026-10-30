@@ -462,7 +462,7 @@ async function renderFolder(fid, entryId) {
 ${e.tags.length ? `<div class="tags">${e.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
 <div class="actions"><a class="btn btn-light btn-small" href="#/f/${fid}/e/${e.id}">Open</a>
 <a class="btn btn-light btn-small" href="#/f/${fid}/edit/${e.id}">${I.edit}Edit</a>
-<button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy code</button></div></div>`
+<button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy </button></div></div>`
       )
       .join('')}</div>`;
 
