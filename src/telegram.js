@@ -22,10 +22,14 @@ let client = null;
 let pending = null;
 let lockHandle = null; // set once the PIN is entered or created
 let sessionCache = null; // the decrypted session, only until restore() has used it
+let memKeys = null; // API ID and Hash, kept in memory only (they are saved encrypted, inside the PIN lock)
 
 /* ---------- keys & session (kept in this browser only) ---------- */
 
+// The keys live in memory. They are written to the browser only inside the PIN-encrypted
+// login, never as plain text. The plain localStorage copy is only read to upgrade older installs.
 export function getKeys() {
+  if (memKeys) return memKeys;
   return {
     apiId: Number(localStorage.getItem(LS.id)) || 0,
     apiHash: localStorage.getItem(LS.hash) || '',
@@ -33,8 +37,29 @@ export function getKeys() {
 }
 
 export function saveKeys(apiId, apiHash) {
-  localStorage.setItem(LS.id, String(apiId));
-  localStorage.setItem(LS.hash, apiHash);
+  memKeys = { apiId: Number(apiId) || 0, apiHash: String(apiHash) };
+}
+
+/** deletes any plain-text keys left in the browser by older versions */
+export function wipePlainKeys() {
+  localStorage.removeItem(LS.id);
+  localStorage.removeItem(LS.hash);
+}
+
+// What is encrypted with the PIN: the login session together with the API keys.
+function packLogin(session) {
+  const { apiId, apiHash } = getKeys();
+  return JSON.stringify({ v: 2, s: session, i: apiId, h: apiHash });
+}
+
+function unpackLogin(text) {
+  try {
+    const o = JSON.parse(text);
+    if (o && typeof o === 'object' && typeof o.s === 'string') return o;
+  } catch (e) {
+    /* an older login saved without keys */
+  }
+  return null;
 }
 
 export function hasSession() {
@@ -61,9 +86,11 @@ export const lockStatus = lock.status;
 export async function setPin(pin) {
   const s = client ? client.session.save() : localStorage.getItem(LS.session);
   if (!s) throw new Error('Not signed in. Please sign in again.');
-  lockHandle = await lock.createLock(pin, s);
+  memKeys = getKeys(); // keep them in memory, then remove the plain copies
+  lockHandle = await lock.createLock(pin, packLogin(s));
   if (!client) sessionCache = s;
-  localStorage.removeItem(LS.session); // the plain copy must not stay behind
+  localStorage.removeItem(LS.session); // the plain copies must not stay behind
+  wipePlainKeys();
 }
 
 /** Result of lock.unlock(): ok, wait, left or wiped */
@@ -71,7 +98,19 @@ export async function unlock(pin) {
   const r = await lock.unlock(pin);
   if (r.ok) {
     lockHandle = r.handle;
-    sessionCache = r.text;
+    const o = unpackLogin(r.text);
+    if (o) {
+      memKeys = { apiId: Number(o.i) || 0, apiHash: o.h || '' };
+      sessionCache = o.s;
+    } else {
+      // saved by an older version: the keys are still in plain storage. Move them inside the lock now.
+      sessionCache = r.text;
+      memKeys = getKeys();
+      await lock.saveSession(lockHandle, packLogin(r.text));
+      wipePlainKeys();
+    }
+  } else if (r.wiped) {
+    wipePlainKeys();
   }
   return r;
 }
@@ -81,7 +120,9 @@ export function resetLock() {
   lock.clear();
   lockHandle = null;
   sessionCache = null;
+  memKeys = null;
   localStorage.removeItem(LS.session);
+  wipePlainKeys();
 }
 
 /* ---------- PIN saved in your Telegram (private channel) ---------- */
@@ -163,7 +204,7 @@ async function makeClient(sessionString) {
 
 async function persist() {
   // Only an encrypted copy is ever saved. A brand new login is saved by setPin().
-  if (lockHandle) await lock.saveSession(lockHandle, client.session.save());
+  if (lockHandle) await lock.saveSession(lockHandle, packLogin(client.session.save()));
 }
 
 /* ---------- login ---------- */
@@ -242,6 +283,8 @@ export async function signOut() {
   lock.clear();
   lockHandle = null;
   sessionCache = null;
+  memKeys = null; // the keys are erased too: sign-in starts empty next time
+  wipePlainKeys();
   client = null;
 }
 
