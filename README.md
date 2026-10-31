@@ -92,7 +92,9 @@ When you open the site, Code Vault reads your channels that start with `CV · ` 
 
 *   **Your code and screenshots**: Stored as messages in your private `CV · ` channels on Telegram.
 *   **API ID and API Hash**: Saved in this browser's `localStorage` only. The Android app keeps its own copy, separate from other browsers.
-*   **Login session**: Saved in this browser's `localStorage` only. Each browser or device signs in on its own.
+*   **Login session**: Saved in this browser's `localStorage` only, and **encrypted with your 6-digit PIN** (AES-GCM, key made with PBKDF2). Each browser or device signs in on its own.
+*   **PIN lock**: After your first sign-in you create a 6-digit PIN. Code Vault creates a private channel called **Private PIN for Tele Cloud** in your own Telegram (once) and saves a scrambled hash of the PIN there, never the PIN itself. On a new device you sign in with your login code and then enter the same PIN, so you create it only once. Every time you open the app on a device, it asks for the PIN first and checks it on the device. Do not delete or edit that channel.
+*   **Wrong PINs**: After 3 wrong PINs you must wait (30 seconds, doubling each time, up to 1 hour). After 10 wrong PINs the saved login is deleted and you are signed out.
 *   **Screenshots**: Shrunk to at most 1600 px and sent as JPEG before upload.
 *   **Questions**: Text longer than about 3,900 characters is cut.
 
@@ -169,6 +171,7 @@ telecloud/
 ├── src/
 │   ├── main.js                  # Interface: screens, routing, dialogs
 │   ├── telegram.js              # Telegram layer: login, folders, entries
+│   ├── lock.js                  # PIN lock: encryption and the wrong-PIN limit
 │   ├── highlight.js             # Syntax colours for the code viewer
 │   └── styles.css               # Layout and look (mobile and desktop)
 ├── screenshots/                 # README images
@@ -216,7 +219,8 @@ The APK is made from the live website with [PWABuilder](https://www.pwabuilder.c
 *   **Login code does not arrive**: Telegram limits how often it sends codes. Wait a few minutes and try again, and check that the API ID and API Hash match the ones on `my.telegram.org`.
 *   **Folders or entries are missing**: Do not rename or delete the `CV · ` channels or the messages inside them in Telegram itself, or Code Vault will not find them.
 *   **"New login" notice from Telegram**: This is expected. It is Code Vault signing in to your account.
-*   **Sign out**: Ends the Telegram session for this app. You will need a new login code next time.
+*   **Sign out**: Ends the Telegram session for this app and removes the saved login from this device. Next time you sign in with a login code and enter your PIN (it is not created again).
+*   **Forgot PIN**: Tap "Forgot PIN?" on the PIN screen. Telegram sends you a login code, and after you enter it you create a new PIN. The new PIN replaces the old one on all your devices. Your folders and code stay safe in Telegram.
 *   **Old version after an update**: Close and reopen the tab or the app (sometimes twice), or clear the site data in your browser, so the new files load.
 *   **"Running in Chrome" notice in the APK**: This is normal and appears once. The app runs the website through Chrome.
 *   **Browser bar shows at the top of the APK**: Open `/.well-known/assetlinks.json` on your site. If it is missing or does not come from the same download as your APK, fix the file, redeploy, then reinstall the APK.
