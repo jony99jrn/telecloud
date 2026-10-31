@@ -91,8 +91,8 @@ When you open the site, Code Vault reads your channels that start with `CV · ` 
 ## 📁 Storage & Data
 
 *   **Your code and screenshots**: Stored as messages in your private `CV · ` channels on Telegram.
-*   **API ID and API Hash**: Saved in this browser's `localStorage` only. The Android app keeps its own copy, separate from other browsers.
-*   **Login session**: Saved in this browser's `localStorage` only, and **encrypted with your 6-digit PIN** (AES-GCM, key made with PBKDF2). Each browser or device signs in on its own.
+*   **API ID and API Hash**: Saved only inside the PIN-encrypted login on this device (never as plain text). They are erased when you sign out, so the next sign-in on that device starts with an empty "Connect your Telegram" page and you paste them once. The Android app keeps its own copy, separate from other browsers.
+*   **Login session**: Saved in this browser's `localStorage` only, and **encrypted with your 6-digit PIN** (AES-GCM, key made with PBKDF2), together with the API keys. Each browser or device signs in on its own.
 *   **PIN lock**: After your first sign-in you create a 6-digit PIN. Code Vault creates a private channel called **Private PIN for Tele Cloud** in your own Telegram (once) and saves a scrambled hash of the PIN there, never the PIN itself. On a new device you sign in with your login code and then enter the same PIN, so you create it only once. Every time you open the app on a device, it asks for the PIN first and checks it on the device. Do not delete or edit that channel.
 *   **Wrong PINs**: After 3 wrong PINs you must wait (30 seconds, doubling each time, up to 1 hour). After 10 wrong PINs the saved login is deleted and you are signed out.
 *   **Screenshots**: Shrunk to at most 1600 px and sent as JPEG before upload.
@@ -236,4 +236,4 @@ You are responsible for using this app in line with Telegram's Terms of Service 
 
 ---
 
-<p align="center">Made with ❤️ by <a href="https://github.com/jony99jrn">jony99jrn</a></p>
+<p align="center">Made by <a href="https://github.com/jony99jrn">jony99jrn</a></p>
