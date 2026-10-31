@@ -119,7 +119,7 @@ ${input ? `<input class="in" name="v" maxlength="60" placeholder="${esc(placehol
 
 /* ---------- state ---------- */
 
-const S = { authed: false, folders: null, entries: {}, cleanup: null };
+const S = { authed: false, folders: null, entries: {}, cleanup: null, forgot: false };
 
 function header(extra = '') {
   return `<div class="topbar"><a class="brand" href="#/"><span class="logo">${I.logo}</span>Code Vault</a>
@@ -269,6 +269,10 @@ ${
 }
 
 async function finishLogin() {
+  if (!(await ensurePin())) {
+    L.step = 1;
+    return renderLogin(); // L.error explains why
+  }
   S.authed = true;
   L.step = 1;
   L.error = '';
@@ -893,6 +897,217 @@ async function renderEdit(fid, entryId) {
   };
 }
 
+/* ================= PIN LOCK ================= */
+
+function pinShell(icon, title, lead, body, error, cta, busy, extra = '') {
+  app.innerHTML = `<div class="login-wrap">
+<div class="login-top brand"><span class="logo">${I.logo}</span>Code Vault</div>
+<span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
+<form class="login-card" id="pin-form" autocomplete="off">
+<div class="login-icon">${icon}</div>
+<h1>${title}</h1><p class="lead">${lead}</p>
+${body}
+<div class="err" id="pin-err" ${error ? '' : 'hidden'}>${esc(error)}</div>
+<button class="btn btn-full" id="go" ${busy ? 'disabled' : ''} style="height:54px;border-radius:18px">${busy ? 'Please wait…' : cta}</button>
+${extra}
+</form></div>`;
+  // digits only, and show or hide the PIN
+  app.querySelectorAll('input').forEach((inp) => {
+    inp.oninput = () => (inp.value = inp.value.replace(/\D/g, '').slice(0, 6));
+  });
+  const eye = $('[data-eye]', app);
+  if (eye)
+    eye.onclick = () => {
+      app.querySelectorAll('input').forEach((inp) => (inp.type = inp.type === 'password' ? 'text' : 'password'));
+    };
+}
+
+const pinField = (id, placeholder, eye = false, ac = 'off') =>
+  `<label class="field">${I.lock}<input id="${id}" type="password" inputmode="numeric" maxlength="6" placeholder="${placeholder}" autocomplete="${ac}" />${
+    eye ? `<button type="button" class="eye" data-eye aria-label="Show or hide">${I.eye}</button>` : ''
+  }</label>`;
+
+// Asks for a new 6-digit PIN. `save(pin)` stores it; if it throws, the error is shown and the person can retry.
+function askNewPin(save) {
+  return new Promise((resolve) => {
+    const draw = (error = '', busy = false) => {
+      pinShell(
+        I.lock,
+        'Create a 6-digit PIN',
+        'The PIN is saved, scrambled, in a private channel in your own Telegram, so the same PIN works on all your devices. It also locks Code Vault on this device. It cannot be recovered, but you can reset it with a Telegram login code.',
+        pinField('p1', 'New PIN', true, 'new-password') + pinField('p2', 'Repeat PIN', false, 'new-password'),
+        error,
+        'Save PIN',
+        busy
+      );
+      if (!busy) $('#p1').focus();
+      $('#pin-form').onsubmit = async (e) => {
+        e.preventDefault();
+        if (busy) return;
+        const a = $('#p1').value;
+        const b = $('#p2').value;
+        if (!/^\d{6}$/.test(a)) return draw('The PIN must be exactly 6 digits.');
+        if (a !== b) return draw('The two PINs do not match.');
+        draw('', true);
+        try {
+          await save(a);
+          resolve(true);
+        } catch (err) {
+          console.error('saving the PIN failed', err);
+          draw('Could not save the PIN. ' + tg.friendlyError(err));
+        }
+      };
+    };
+    draw();
+  });
+}
+
+const fmtWait = (ms) => {
+  const s = Math.ceil(ms / 1000);
+  return s >= 60 ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s` : `${s} s`;
+};
+
+// Generic "enter your PIN" screen with the wrong-PIN limit.
+// Resolves { ok: true, pin } | { wiped: true } | { forgot: true }
+function askPinScreen({ lead, status, check, forgot }) {
+  return new Promise((resolve) => {
+    let timer = null;
+    const finish = (v) => {
+      clearInterval(timer);
+      resolve(v);
+    };
+    const draw = (error = '', busy = false) => {
+      clearInterval(timer);
+      const st = status();
+      const waitMs = Math.max(0, st.until - Date.now());
+      const waiting = waitMs > 0;
+      pinShell(
+        I.lock,
+        'Enter your PIN',
+        lead,
+        pinField('p1', '6-digit PIN', true, 'current-password'),
+        waiting ? '' : error || (st.fails ? `Wrong PIN tries so far: ${st.fails}. After ${st.left} more you are signed out.` : ''),
+        waiting ? 'Locked' : 'Unlock',
+        busy,
+        `<div style="margin-top:12px"><button type="button" class="link-btn" data-forgot>Forgot PIN?</button></div>`
+      );
+      const err = $('#pin-err');
+      const go = $('#go');
+      const input = $('#p1');
+      if (waiting) {
+        input.disabled = true;
+        go.disabled = true;
+        const tick = () => {
+          const left = st.until - Date.now();
+          if (left <= 0) return draw();
+          err.hidden = false;
+          err.textContent = `Too many wrong tries. Try again in ${fmtWait(left)}. ${st.left} tries left before you are signed out.`;
+        };
+        tick();
+        timer = setInterval(tick, 1000);
+      } else if (!busy) input.focus();
+
+      $('[data-forgot]').onclick = async () => {
+        const ok = await modal({ title: forgot.title, text: forgot.text, confirm: forgot.confirm });
+        if (ok) finish({ forgot: true });
+      };
+
+      $('#pin-form').onsubmit = async (e) => {
+        e.preventDefault();
+        if (busy || waiting) return;
+        const pin = input.value;
+        if (!/^\d{6}$/.test(pin)) return draw('Enter all 6 digits.');
+        draw('', true);
+        const r = await check(pin);
+        if (r.ok) return finish({ ok: true, pin });
+        if (r.wiped) return finish({ wiped: true });
+        draw('Wrong PIN.');
+      };
+    };
+    draw();
+  });
+}
+
+// Opening the app: the PIN unlocks the login saved on this device.
+// Resolves true when unlocked, false when the saved login was removed (forgot PIN or too many tries).
+async function askUnlock() {
+  const r = await askPinScreen({
+    lead: 'Code Vault is locked. Type your 6-digit PIN to continue.',
+    status: () => tg.lockStatus('local'),
+    check: (pin) => tg.unlock(pin),
+    forgot: {
+      title: 'Forgot your PIN?',
+      text: 'The PIN cannot be recovered. This removes the saved login from this device. Telegram then sends you a login code, and after you enter it you create a new PIN. Your folders and code stay safe in Telegram.',
+      confirm: 'Continue',
+    },
+  });
+  if (r.ok) return true;
+  if (r.wiped) L.error = 'Too many wrong PINs. For your safety the saved login was removed. Please sign in again.';
+  else {
+    tg.resetLock();
+    S.forgot = true; // after the login code, ask for a NEW pin
+  }
+  return false;
+}
+
+// Right after a Telegram login: check the PIN saved in your Telegram, or create it.
+// Returns true when done, false when the person was signed out (L.error says why).
+async function ensurePin() {
+  try {
+    if (tg.isUnlocked()) {
+      await tg.saveLogin(); // the PIN was entered earlier in this session (login had expired)
+      return true;
+    }
+    app.innerHTML = `<div class="login-wrap"><div class="loading">Checking your PIN…</div></div>`;
+    let remote;
+    for (;;) {
+      try {
+        remote = await tg.getRemotePin();
+        break;
+      } catch (e) {
+        await modal({ title: 'Could not check your PIN', text: tg.friendlyError(e), confirm: 'Try again', noCancel: true });
+        app.innerHTML = `<div class="login-wrap"><div class="loading">Checking your PIN…</div></div>`;
+      }
+    }
+
+    const forgot = S.forgot;
+    S.forgot = false;
+    if (remote.rec && !forgot) {
+      const r = await askPinScreen({
+        lead: 'Enter the PIN saved in your Telegram to finish signing in.',
+        status: () => tg.lockStatus('remote'),
+        check: (pin) => tg.verifyRemotePin(pin, remote.rec),
+        forgot: {
+          title: 'Forgot your PIN?',
+          text: 'You just signed in with a Telegram login code, so you can create a new PIN now. It replaces the old PIN on all your devices.',
+          confirm: 'Create new PIN',
+        },
+      });
+      if (r.wiped) {
+        L.error = 'Too many wrong PINs. You were signed out. Please sign in again.';
+        await tg.signOut();
+        return false;
+      }
+      if (r.ok) {
+        await tg.setPin(r.pin); // encrypt the login on this device with the same PIN
+        return true;
+      }
+      // r.forgot: fall through and create a new PIN
+    }
+
+    await askNewPin(async (pin) => {
+      await tg.saveRemotePin(pin, remote); // creates the private channel the first time
+      await tg.setPin(pin);
+    });
+    return true;
+  } catch (e) {
+    console.error('ensurePin failed', e);
+    L.error = tg.friendlyError(e);
+    await tg.signOut().catch(() => {});
+    return false;
+  }
+}
+
 /* ================= ROUTER ================= */
 
 function route() {
@@ -919,8 +1134,16 @@ window.addEventListener('hashchange', route);
 
 (async function start() {
   if (tg.hasSession()) {
-    app.innerHTML = `<div class="login-wrap"><div class="loading">Connecting to Telegram…</div></div>`;
-    S.authed = await tg.restore();
+    if (tg.hasLockedLogin()) {
+      if (!(await askUnlock())) return route(); // login was removed, show the sign-in screen
+      app.innerHTML = `<div class="login-wrap"><div class="loading">Connecting to Telegram…</div></div>`;
+      S.authed = await tg.restore();
+    } else {
+      // a login saved before the PIN lock existed: connect, then create or check the PIN
+      app.innerHTML = `<div class="login-wrap"><div class="loading">Connecting to Telegram…</div></div>`;
+      S.authed = await tg.restore();
+      if (S.authed && !(await ensurePin())) S.authed = false;
+    }
   }
   route();
 })();
