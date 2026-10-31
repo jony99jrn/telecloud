@@ -29,6 +29,11 @@ const I = {
   chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg>',
+  user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0116 0"/></svg>',
+  at: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 006 0v-1a10 10 0 10-4 8"/></svg>',
+  shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>',
+  out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4M10 8l-4 4 4 4M6 12h11"/></svg>',
+  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 114 2c-.9.6-1.5 1.1-1.5 2.3M12 17h.01"/></svg>',
 };
 
 function toast(msg, ms = 2200) {
@@ -119,15 +124,40 @@ ${input ? `<input class="in" name="v" maxlength="60" placeholder="${esc(placehol
 
 /* ---------- state ---------- */
 
-const S = { authed: false, folders: null, entries: {}, cleanup: null, forgot: false };
+const S = { authed: false, folders: null, entries: {}, cleanup: null, forgot: false, profile: null };
 
-function header(extra = '') {
-  return `<div class="topbar"><a class="brand" href="#/"><span class="logo">${I.logo}</span>Code Vault</a>
-<div class="top-actions"><span class="pill"><span class="dot"></span><span class="long">Connected to Telegram</span><span class="short">Connected</span></span>${extra}</div></div>`;
+const initials = (name) =>
+  String(name || '')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase();
+
+// What goes inside a round avatar: the Telegram photo, else initials, else a person icon.
+function avatarInner(p = S.profile) {
+  if (p?.photo) return `<img src="${esc(p.photo)}" alt="" />`;
+  if (p?.name) return `<span>${esc(initials(p.name))}</span>`;
+  return I.user;
 }
 
-function topActions() {
-  return `<button class="pill-btn so" data-signout>Sign out</button>`;
+// Loads the profile once and updates every avatar already on screen.
+async function loadProfile() {
+  if (S.profile) return S.profile;
+  try {
+    S.profile = await tg.getProfile();
+    document.querySelectorAll('[data-avatar]').forEach((a) => (a.innerHTML = avatarInner()));
+  } catch (e) {
+    console.warn('profile failed', e);
+  }
+  return S.profile;
+}
+
+function header() {
+  if (S.authed && !S.profile) loadProfile();
+  return `<div class="topbar"><a class="brand" href="#/"><span class="logo">${I.logo}</span>Code Vault</a>
+<div class="top-actions"><a class="avatar" href="#/profile" data-avatar aria-label="Your profile" title="Your profile">${avatarInner()}</a></div></div>`;
 }
 
 async function ensureFolders(force = false) {
@@ -147,6 +177,7 @@ function bindShared(root) {
       if (!ok) return;
       await tg.signOut();
       S.authed = false;
+      S.profile = null;
       S.folders = null;
       S.entries = {};
       location.hash = '';
@@ -155,9 +186,103 @@ function bindShared(root) {
     };
 }
 
+/* ================= PROFILE ================= */
+
+async function renderProfile() {
+  app.innerHTML = `<div class="shell narrow">${header()}
+<a class="back" href="#/">${I.back}All folders</a>
+<div id="pf"><div class="loading">Loading your profile…</div></div></div>`;
+
+  const p = await loadProfile();
+  if (location.hash.replace(/^#\/?/, '') !== 'profile') return; // the person already left this page
+  const box = $('#pf');
+  if (!p) {
+    box.innerHTML = `<div class="empty">Could not load your Telegram profile.<br/><button class="link-btn" id="retry">Try again</button></div>`;
+    $('#retry').onclick = renderProfile;
+    return;
+  }
+
+  const row = (icon, label, value, copy = '') =>
+    `<div class="pf-row"><span class="pf-ic">${icon}</span><div class="pf-tx"><small>${label}</small><b>${value ? esc(value) : '<i>Not set</i>'}</b></div>${
+      copy && value ? `<button class="pf-copy" data-copy="${esc(copy)}" aria-label="Copy ${label}">${I.copy}</button>` : ''
+    }</div>`;
+
+  box.innerHTML = `<div class="card pf-card">
+<div class="pf-head"><div class="pf-photo">${avatarInner(p)}</div>
+<h1>${esc(p.name)}</h1>
+<div class="pf-user">${p.username ? '@' + esc(p.username) : 'No username set'}</div>
+<span class="pill"><span class="dot"></span>Connected to Telegram</span></div>
+<div class="pf-rows">
+${row(I.phone, 'Phone number', p.phone, p.phone)}
+${row(I.at, 'Username', p.username ? '@' + p.username : '', p.username ? '@' + p.username : '')}
+${row(I.hash, 'Telegram ID', p.id, p.id)}
+${row(I.shield, 'Security', 'PIN locked. API keys stay on this device.')}
+</div>
+<button class="btn btn-full pf-out" data-signout>${I.out}Sign out</button>
+<p class="pf-note">Signing out ends the Telegram session for this app. Your folders and code stay safe in Telegram.</p>
+</div>`;
+
+  bindShared(app);
+  box.querySelectorAll('[data-copy]').forEach((b) => {
+    b.onclick = async () => toast((await copyText(b.dataset.copy)) ? 'Copied' : 'Could not copy');
+  });
+}
+
 /* ================= LOGIN ================= */
 
 const L = { step: 1, phone: '', error: '' };
+
+// Step-by-step guide for finding the API ID and API Hash, drawn with small mock-ups.
+const GUIDE = [
+  {
+    t: 'Open my.telegram.org',
+    d: 'Use any browser, on your phone or your computer.',
+    v: `<div class="m-bar">${I.lock}<span>my.telegram.org</span></div>`,
+  },
+  {
+    t: 'Log in with your phone number',
+    d: 'Type your number with the country code. Telegram sends a code to your Telegram app (not an SMS). Type that code on the site.',
+    v: `<div class="m-field">+880 1XXXXXXXXX</div><div class="m-field">Code from your Telegram app</div>`,
+  },
+  {
+    t: 'Click “API development tools”',
+    d: 'It is in the list of options right after you log in.',
+    v: `<div class="m-item">Delete account</div><div class="m-item hot">API development tools</div>`,
+  },
+  {
+    t: 'Create an application',
+    d: 'Fill App title and Short name with anything you like, for example “Code Vault”. Choose “Other” as the platform and press Create application.',
+    v: `<div class="m-field">App title: Code Vault</div><div class="m-field">Short name: codevault</div><div class="m-field">Platform: Other</div><div class="m-btn">Create application</div>`,
+  },
+  {
+    t: 'Copy your API ID and API Hash',
+    d: 'The API ID is a number. The API Hash is a long mix of 32 letters and numbers. Paste them into the two boxes in this app.',
+    v: `<div class="m-kv"><span>App api_id</span><b>12345678</b></div><div class="m-kv"><span>App api_hash</span><b>0123abcd4567ef89…</b></div>`,
+  },
+];
+
+function openGuide() {
+  const back = document.createElement('div');
+  back.className = 'modal-back';
+  back.innerHTML = `<div class="modal guide" role="dialog" aria-modal="true" aria-label="How to find your API ID and API Hash">
+<div class="g-head"><div><h3>Find your API ID and Hash</h3><p>It takes about two minutes and is free.</p></div>
+<button type="button" class="g-x" data-x aria-label="Close">${I.x}</button></div>
+<ol class="g-steps">${GUIDE.map(
+    (s, i) => `<li><span class="g-n">${i + 1}</span><div class="g-body"><b>${s.t}</b><p>${s.d}</p><div class="mock">${s.v}</div></div></li>`
+  ).join('')}</ol>
+<div class="g-tip">${I.help}<span>If the site shows an error, wait a few minutes, turn off any VPN and try again. Never share your API Hash with anyone.</span></div>
+<div class="btns"><a class="btn btn-light btn-small" href="https://my.telegram.org" target="_blank" rel="noopener">${I.ext}Open my.telegram.org</a>
+<button type="button" class="btn btn-small" data-x>Got it</button></div></div>`;
+  document.body.appendChild(back);
+  const onKey = (e) => e.key === 'Escape' && close();
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    back.remove();
+  };
+  back.querySelectorAll('[data-x]').forEach((b) => (b.onclick = close));
+  back.addEventListener('mousedown', (e) => e.target === back && close());
+  document.addEventListener('keydown', onKey);
+}
 
 function renderLogin(busy = false) {
   const keys = tg.getKeys();
@@ -201,7 +326,8 @@ ${L.error ? `<div class="err">${esc(L.error)}</div>` : ''}
 ${
   L.step === 1
     ? `<div class="divider">Where do I find these?</div>
-<a class="ext" href="https://my.telegram.org" target="_blank" rel="noopener">${I.ext}Open my.telegram.org</a>`
+<button type="button" class="ext ext-guide" data-guide>${I.help}Show me step by step</button>
+<a class="ext" href="https://my.telegram.org" target="_blank" rel="noopener" style="margin-top:10px">${I.ext}Open my.telegram.org</a>`
     : `<div style="margin-top:12px"><button type="button" class="link-btn" data-back>Back</button></div>`
 }
 <div class="steps">${dots}</div>
@@ -217,6 +343,9 @@ ${
       const inp = eye.parentElement.querySelector('input');
       inp.type = inp.type === 'password' ? 'text' : 'password';
     };
+
+  const guide = $('[data-guide]', app);
+  if (guide) guide.onclick = openGuide;
 
   const back = $('[data-back]', app);
   if (back)
@@ -283,7 +412,7 @@ async function finishLogin() {
 /* ================= HOME ================= */
 
 async function renderHome() {
-  app.innerHTML = `<div class="shell">${header(topActions())}
+  app.innerHTML = `<div class="shell">${header()}
 <div class="head-row"><div><h1 class="title">Your folders</h1>
 <p class="sub">Each folder is a private channel in your Telegram. Open one to see your code.</p></div>
 <button class="btn" data-newfolder>${I.plus}New folder</button></div>
@@ -397,7 +526,7 @@ async function renderFolder(fid, entryId) {
     return;
   }
 
-  app.innerHTML = `<div class="shell">${header(topActions())}
+  app.innerHTML = `<div class="shell">${header()}
 <a class="back" href="#/">${I.back}All folders</a>
 <div class="head-row"><div class="folder-head"><span class="ficon big">${I.folder}</span>
 <div><h1>${esc(folder.name)}</h1><p id="count">Stored in a private Telegram channel.</p></div></div>
@@ -1122,6 +1251,7 @@ function route() {
   }
   if (!S.authed) return renderLogin();
   const p = location.hash.replace(/^#\/?/, '').split('/');
+  if (p[0] === 'profile') return renderProfile();
   if (p[0] === 'f' && p[1]) {
     if (p[2] === 'new') return renderNew(p[1]);
     if (p[2] === 'edit' && p[3]) return renderEdit(p[1], p[3]);

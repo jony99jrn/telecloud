@@ -268,12 +268,45 @@ export async function verifyPassword(password) {
   await persist();
 }
 
+/** Name, username, phone and photo of the signed-in account. Cached until sign-out. */
+let profileCache = null;
+
+export async function getProfile(force = false) {
+  if (profileCache && !force) return profileCache;
+  if (!client) throw new Error('Not connected to Telegram. Please sign in again.');
+  if (!client.connected) await client.connect();
+  const me = await client.getMe();
+  let photo = null;
+  try {
+    const buf = await client.downloadProfilePhoto(me, { isBig: false });
+    if (buf && buf.length) photo = URL.createObjectURL(new Blob([buf], { type: 'image/jpeg' }));
+  } catch (e) {
+    /* no photo, or it could not be loaded: the app shows initials instead */
+  }
+  const name = [me.firstName, me.lastName].filter(Boolean).join(' ').trim();
+  const phone = me.phone ? (String(me.phone).startsWith('+') ? String(me.phone) : '+' + me.phone) : '';
+  profileCache = {
+    name: name || me.username || 'Telegram user',
+    username: me.username || '',
+    phone,
+    id: me.id != null ? String(me.id) : '',
+    photo,
+  };
+  return profileCache;
+}
+
+function clearProfile() {
+  if (profileCache?.photo) URL.revokeObjectURL(profileCache.photo);
+  profileCache = null;
+}
+
 export async function signOut() {
   try {
     await client.invoke(new Api.auth.LogOut());
   } catch (e) {
     console.warn(e);
   }
+  clearProfile();
   try {
     await client.disconnect();
   } catch (e) {
