@@ -10,6 +10,7 @@ import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import { CustomFile } from 'telegram/client/uploads';
 import { Buffer } from 'buffer';
+import * as lock from './lock.js';
 
 const PREFIX = 'CV · ';
 const LS = { id: 'cv_api_id', hash: 'cv_api_hash', session: 'cv_session' };
@@ -19,6 +20,8 @@ const EXT = { C: 'c', 'C++': 'cpp', Java: 'java', Python: 'py', JavaScript: 'js'
 
 let client = null;
 let pending = null;
+let lockHandle = null; // set once the PIN is entered or created
+let sessionCache = null; // the decrypted session, only until restore() has used it
 
 /* ---------- keys & session (kept in this browser only) ---------- */
 
@@ -35,7 +38,117 @@ export function saveKeys(apiId, apiHash) {
 }
 
 export function hasSession() {
-  return !!localStorage.getItem(LS.session);
+  return lock.hasEncrypted() || !!localStorage.getItem(LS.session);
+}
+
+/* ---------- PIN lock ---------- */
+
+/** true when an encrypted login is saved on this device and the PIN is needed to open it */
+export const hasLockedLogin = lock.hasEncrypted;
+
+/** true once the PIN was entered or created in this session */
+export const isUnlocked = () => !!lockHandle;
+
+/** saves the current login, encrypted, with the PIN that is already unlocked */
+export async function saveLogin() {
+  sessionCache = null;
+  await persist();
+}
+
+export const lockStatus = lock.status;
+
+/** Encrypts the current login with a new 6-digit PIN (also upgrades an older, unlocked login). */
+export async function setPin(pin) {
+  const s = client ? client.session.save() : localStorage.getItem(LS.session);
+  if (!s) throw new Error('Not signed in. Please sign in again.');
+  lockHandle = await lock.createLock(pin, s);
+  if (!client) sessionCache = s;
+  localStorage.removeItem(LS.session); // the plain copy must not stay behind
+}
+
+/** Result of lock.unlock(): ok, wait, left or wiped */
+export async function unlock(pin) {
+  const r = await lock.unlock(pin);
+  if (r.ok) {
+    lockHandle = r.handle;
+    sessionCache = r.text;
+  }
+  return r;
+}
+
+/** "Forgot PIN": deletes the saved login so the person can sign in to Telegram again. */
+export function resetLock() {
+  lock.clear();
+  lockHandle = null;
+  sessionCache = null;
+  localStorage.removeItem(LS.session);
+}
+
+/* ---------- PIN saved in your Telegram (private channel) ---------- */
+
+// Holds one message "#cvpin {json}" with a salted hash of the PIN, never the PIN.
+// The title must NOT start with "CV · ", or it would show up as a code folder.
+export const PIN_CHANNEL = 'Private PIN for Tele Cloud';
+
+export const verifyRemotePin = lock.verifyRemote;
+
+async function findPinChannel() {
+  for await (const d of client.iterDialogs({ limit: 2000 })) {
+    const e = d.entity;
+    // only a channel you own counts, so nobody else can plant a fake one
+    if (e && e.className === 'Channel' && e.broadcast && e.creator && e.title === PIN_CHANNEL) return e;
+  }
+  return null;
+}
+
+async function createPinChannel() {
+  if (!client.connected) await client.connect();
+  const old = client.floodSleepThreshold;
+  client.floodSleepThreshold = 0; // show the wait instead of sleeping silently
+  let res;
+  try {
+    res = await client.invoke(
+      new Api.channels.CreateChannel({
+        title: PIN_CHANNEL,
+        about: 'Created by Code Vault. Keeps a scrambled check of your PIN so it works on all your devices. Do not delete.',
+        broadcast: true,
+        megagroup: false,
+      })
+    );
+  } finally {
+    client.floodSleepThreshold = old;
+  }
+  const chats = res?.chats || res?.updates?.chats || [];
+  const ch = chats.find((c) => c.className === 'Channel');
+  if (!ch) throw new Error('Telegram did not confirm the new channel. Open Telegram and check, then try again.');
+  return ch;
+}
+
+/** Looks for the PIN channel and the saved PIN record. rec is null when there is none yet. */
+export async function getRemotePin() {
+  const channel = await findPinChannel();
+  if (!channel) return { channel: null, msgId: null, rec: null };
+  const msgs = await client.getMessages(channel, { limit: 30 });
+  for (const m of msgs) {
+    const text = m.message || '';
+    if (!text.startsWith('#cvpin ')) continue;
+    try {
+      const rec = JSON.parse(text.slice(7));
+      if (lock.isVerifier(rec)) return { channel, msgId: m.id, rec };
+    } catch (e) {
+      /* not a valid record */
+    }
+  }
+  return { channel, msgId: null, rec: null };
+}
+
+/** Saves (or replaces) the PIN record. Creates the channel the first time. `existing` comes from getRemotePin(). */
+export async function saveRemotePin(pin, existing) {
+  const rec = await lock.makeVerifier(pin);
+  const channel = existing?.channel || (await createPinChannel());
+  const text = '#cvpin ' + JSON.stringify(rec);
+  if (existing?.msgId) await safeEdit(channel, { message: existing.msgId, text });
+  else await client.sendMessage(channel, { message: text });
 }
 
 async function makeClient(sessionString) {
@@ -48,14 +161,16 @@ async function makeClient(sessionString) {
   return client;
 }
 
-function persist() {
-  localStorage.setItem(LS.session, client.session.save());
+async function persist() {
+  // Only an encrypted copy is ever saved. A brand new login is saved by setPin().
+  if (lockHandle) await lock.saveSession(lockHandle, client.session.save());
 }
 
 /* ---------- login ---------- */
 
 export async function restore() {
-  const s = localStorage.getItem(LS.session);
+  const s = sessionCache || localStorage.getItem(LS.session);
+  sessionCache = null;
   const { apiId, apiHash } = getKeys();
   if (!s || !apiId || !apiHash) return false;
   try {
@@ -88,7 +203,7 @@ export async function verifyCode(code) {
     if (e.errorMessage === 'SESSION_PASSWORD_NEEDED') return 'password';
     throw e;
   }
-  persist();
+  await persist();
   return 'done';
 }
 
@@ -109,7 +224,7 @@ export async function verifyPassword(password) {
   } catch (e) {
     throw last || e;
   }
-  persist();
+  await persist();
 }
 
 export async function signOut() {
@@ -124,6 +239,9 @@ export async function signOut() {
     /* ignore */
   }
   localStorage.removeItem(LS.session);
+  lock.clear();
+  lockHandle = null;
+  sessionCache = null;
   client = null;
 }
 
