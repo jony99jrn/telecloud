@@ -1145,6 +1145,7 @@ window.addEventListener('hashchange', route);
       if (S.authed && !(await ensurePin())) S.authed = false;
     }
   }
+  else tg.wipePlainKeys(); // no login saved: do not leave keys from an older version lying around
   route();
 })();
 
