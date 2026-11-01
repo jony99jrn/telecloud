@@ -3,6 +3,6 @@
       "target": {
         "namespace": "android_app",
         "package_name": "app.vercel.telecloud_jrn.twa",
-        "sha256_cert_fingerprints": ["7F:3F:40:EB:23:DD:81:77:0B:B2:3A:92:C6:41:9B:8D:41:81:D2:D1:45:0C:2A:92:B9:B3:0E:69:EC:B9:7B:3E"]
+        "sha256_cert_fingerprints": ["B8:6B:A2:48:C0:78:7B:B3:8F:BE:76:A2:8C:9D:96:1D:B9:9A:EA:43:45:DE:B9:2D:D1:CA:BA:64:ED:23:EC:DE"]
       }
     }]
