@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Code Vault",
-  "short_name": "Code Vault",
+  "name": "Telecloud",
+  "short_name": "Telecloud",
   "description": "Store your coursework code in your own private Telegram channels.",
   "lang": "en",
   "start_url": "/",
