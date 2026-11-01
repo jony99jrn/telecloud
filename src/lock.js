@@ -1,4 +1,4 @@
-// PIN lock for Code Vault.
+// PIN lock for Telecloud.
 //
 // Two places use the PIN:
 //   1. This device: the Telegram login is encrypted with the PIN (AES-GCM, key made
@@ -11,6 +11,9 @@
 // MAX_FAILS wrong tries the saved login is deleted / the person is signed out.
 
 const KEY_ENC = 'cv_session_enc';
+// Kept only for the life of this tab/app window (sessionStorage): a refresh does not ask for
+// the PIN again, but closing the app and opening it later does.
+const KEY_TAB = 'tc_tab_unlock';
 const STATE = { local: 'cv_lock_state', remote: 'cv_remote_state' };
 
 export const PIN_LENGTH = 6;
@@ -55,6 +58,42 @@ export function status(kind = 'local') {
 export function clear() {
   localStorage.removeItem(KEY_ENC);
   localStorage.removeItem(STATE.local);
+  forgetTab();
+}
+
+/* ---------- stay unlocked while the tab is open (refresh does not ask again) ---------- */
+
+export function forgetTab() {
+  try {
+    sessionStorage.removeItem(KEY_TAB);
+  } catch (e) {
+    /* storage blocked */
+  }
+}
+
+async function rememberTab(handle) {
+  try {
+    const raw = await crypto.subtle.exportKey('raw', handle.key);
+    sessionStorage.setItem(KEY_TAB, JSON.stringify({ k: toB64(raw), s: toB64(handle.salt) }));
+  } catch (e) {
+    /* not possible here, the PIN is simply asked again after a refresh */
+  }
+}
+
+/** Opens the saved login without the PIN when this tab was already unlocked.
+ *  Returns { text, handle } or null (then the PIN is asked). */
+export async function restoreTab() {
+  try {
+    const t = JSON.parse(sessionStorage.getItem(KEY_TAB));
+    const blob = JSON.parse(localStorage.getItem(KEY_ENC));
+    if (!t || !t.k || !t.s || !blob) return null;
+    const key = await crypto.subtle.importKey('raw', fromB64(t.k), { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(blob.i) }, key, fromB64(blob.d));
+    return { text: td.decode(pt), handle: { key, salt: fromB64(t.s) } };
+  } catch (e) {
+    forgetTab();
+    return null;
+  }
 }
 
 /* ---------- the limit on wrong tries (shared) ---------- */
@@ -95,7 +134,7 @@ async function deriveKey(pin, salt) {
     { name: 'PBKDF2', salt, iterations: ITERATIONS, hash: 'SHA-256' },
     base,
     { name: 'AES-GCM', length: 256 },
-    false,
+    true, // extractable: lets the unlocked key be kept for this tab only
     ['encrypt', 'decrypt']
   );
 }
@@ -113,7 +152,9 @@ export async function createLock(pin, text) {
   const key = await deriveKey(pin, salt);
   await seal(key, salt, text);
   writeState('local', { fails: 0, until: 0 });
-  return { key, salt };
+  const handle = { key, salt };
+  await rememberTab(handle);
+  return handle;
 }
 
 export async function saveSession(handle, text) {
@@ -138,7 +179,7 @@ export async function unlock(pin) {
     clear();
     return { ok: false, wiped: true };
   }
-  return attempt(
+  const r = await attempt(
     'local',
     async () => {
       const salt = fromB64(blob.s);
@@ -148,6 +189,8 @@ export async function unlock(pin) {
     },
     clear
   );
+  if (r.ok) await rememberTab(r.handle);
+  return r;
 }
 
 /* ---------- your Telegram account: salted hash of the PIN ---------- */
