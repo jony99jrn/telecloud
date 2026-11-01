@@ -16,7 +16,7 @@
 **Telecloud** is a lightweight web app that turns your own Telegram account into a free, private vault for your coursework code. Create folders, save code files with the question and screenshots, and find everything again later from any browser, or from the Android app. Nothing is stored on a third-party server.
 
 🔗 **Live app:** [telecloud-jrn.vercel.app](https://telecloud-jrn.vercel.app)  
-📲 **Android app:** download the APK from the [Releases](https://github.com/jony99jrn/telecloud/releases) page
+📲 **Android app:** [download Telecloud.apk](https://github.com/jony99jrn/telecloud/releases/latest/download/Telecloud.apk) (also on the [Releases](https://github.com/jony99jrn/telecloud/releases) page)
 
 ---
 
@@ -136,7 +136,7 @@ Telecloud needs your own API credentials to connect to Telegram. This is free an
 Open the browser menu and choose **Install app** or **Add to Home screen**. Telecloud then opens in its own window.
 
 ### Android APK
-1. Download the `.apk` file from the [Releases](https://github.com/jony99jrn/telecloud/releases) page onto your phone.
+1. Download `Telecloud.apk` onto your phone, either with the **Get the app** button on the website (it only shows in a normal browser, never inside the app itself) or from the [Releases](https://github.com/jony99jrn/telecloud/releases) page.
 2. Tap the file. If Android blocks it, allow **Install unknown apps** for the app you opened it from, then tap Install.
 3. Open **Telecloud** and sign in with your API ID, API Hash, phone number and login code. Your folders and entries appear, because they are stored in your Telegram.
 
@@ -207,6 +207,17 @@ The APK is made from the live website with [PWABuilder](https://www.pwabuilder.c
 4. In the popup, set the **Package ID** (for example `com.jony99jrn.codevault`) and the app name, then press **Generate** and **Download**.
 5. Unzip the download. Install the `.apk` on your phone.
 6. Copy the `assetlinks.json` from the zip into `public/.well-known/assetlinks.json` in this repo, then push. This hides the browser bar at the top of the app.
+7. Rename the `.apk` to exactly `Telecloud.apk` and attach it to the release (see below).
+
+#### Publish the APK with every release
+The website's **Get the app** button points to `https://github.com/jony99jrn/telecloud/releases/latest/download/Telecloud.apk`, which is the file in the **newest** release.
+1. On GitHub, open **Releases** and press **Draft a new release**.
+2. Choose a tag such as `v1.0.1` and add release notes.
+3. Attach the file named exactly `Telecloud.apk`.
+4. Press **Publish release**.
+
+> [!WARNING]
+> Attach `Telecloud.apk` to **every** release. If the newest release has no file with that exact name, the download button shows a "Not Found" page. Releases marked as pre-release or draft are ignored by the button.
 
 > [!IMPORTANT]
 > Keep the signing key (the `.keystore` file and its password) from the zip in a safe place, and **never commit it to GitHub**. Android only accepts an update over the installed app if it is signed with the same key.
