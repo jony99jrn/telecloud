@@ -94,26 +94,35 @@ export async function setPin(pin) {
   wipePlainKeys();
 }
 
+async function applyUnlocked(r) {
+  lockHandle = r.handle;
+  const o = unpackLogin(r.text);
+  if (o) {
+    memKeys = { apiId: Number(o.i) || 0, apiHash: o.h || '' };
+    sessionCache = o.s;
+  } else {
+    // saved by an older version: the keys are still in plain storage. Move them inside the lock now.
+    sessionCache = r.text;
+    memKeys = getKeys();
+    await lock.saveSession(lockHandle, packLogin(r.text));
+    wipePlainKeys();
+  }
+}
+
 /** Result of lock.unlock(): ok, wait, left or wiped */
 export async function unlock(pin) {
   const r = await lock.unlock(pin);
-  if (r.ok) {
-    lockHandle = r.handle;
-    const o = unpackLogin(r.text);
-    if (o) {
-      memKeys = { apiId: Number(o.i) || 0, apiHash: o.h || '' };
-      sessionCache = o.s;
-    } else {
-      // saved by an older version: the keys are still in plain storage. Move them inside the lock now.
-      sessionCache = r.text;
-      memKeys = getKeys();
-      await lock.saveSession(lockHandle, packLogin(r.text));
-      wipePlainKeys();
-    }
-  } else if (r.wiped) {
-    wipePlainKeys();
-  }
+  if (r.ok) await applyUnlocked(r);
+  else if (r.wiped) wipePlainKeys();
   return r;
+}
+
+/** After a refresh: true when this tab was already unlocked, so the PIN is not asked again. */
+export async function autoUnlock() {
+  const r = await lock.restoreTab();
+  if (!r) return false;
+  await applyUnlocked(r);
+  return true;
 }
 
 /** "Forgot PIN": deletes the saved login so the person can sign in to Telegram again. */
