@@ -1,7 +1,7 @@
-# Code Vault (TeleCloud) 💻🔐
+# Telecloud 💻🔐
 
 <p align="center">
-  <img src="public/icon.svg" width="130" height="130" alt="Code Vault Logo">
+  <img src="public/icon.svg" width="130" height="130" alt="Telecloud Logo">
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/PWA-Installable-green?style=flat-square" alt="PWA Badge">
 </p>
 
-**Code Vault** is a lightweight web app that turns your own Telegram account into a free, private vault for your coursework code. Create folders, save code files with the question and screenshots, and find everything again later from any browser, or from the Android app. Nothing is stored on a third-party server.
+**Telecloud** is a lightweight web app that turns your own Telegram account into a free, private vault for your coursework code. Create folders, save code files with the question and screenshots, and find everything again later from any browser, or from the Android app. Nothing is stored on a third-party server.
 
 🔗 **Live app:** [telecloud-jrn.vercel.app](https://telecloud-jrn.vercel.app)  
 📲 **Android app:** download the APK from the [Releases](https://github.com/jony99jrn/telecloud/releases) page
@@ -52,7 +52,7 @@
 *   **🎨 Code Viewer**: Full-screen viewer with line numbers and syntax colours for C, C++, Java, Python, JavaScript, SQL and HTML/CSS.
 *   **📱 Works on Android and Desktop**: Responsive layout for phones, tablets and computers, with a bottom-sheet style dialog on small screens.
 *   **📲 Installable (PWA)**: Add it to your home screen or desktop from the browser menu and open it like a normal app.
-*   **🤖 Android APK**: A downloadable APK that opens Code Vault in its own app window. It updates itself whenever the website is updated.
+*   **🤖 Android APK**: A downloadable APK that opens Telecloud in its own app window. It updates itself whenever the website is updated.
 *   **⚡ Offline-Friendly Shell**: A service worker keeps the app screen available when you have no connection. Loading your folders still needs the internet.
 *   **🔒 Private by Design**: Your API keys and login session stay in your own browser. The app talks directly to Telegram.
 
@@ -79,21 +79,21 @@
 
 | Concept | What it is in Telegram |
 | :--- | :--- |
-| **Folder** | A private channel whose title starts with `CV · ` |
+| **Folder** | A private channel whose title starts with `TC · ` |
 | **Entry (code)** | A document message holding the code file, with a `#cv` caption that stores the title, language, tags and time |
 | **Entry (question)** | An optional text message tagged `#cvq` with the question |
 | **Entry (screenshots)** | An optional photo or album tagged `#cvi` |
 
-When you open the site, Code Vault reads your channels that start with `CV · ` and rebuilds your folders and entries from the messages inside them.
+When you open the site, Telecloud reads your channels that start with `TC · ` and rebuilds your folders and entries from the messages inside them.
 
 ---
 
 ## 📁 Storage & Data
 
-*   **Your code and screenshots**: Stored as messages in your private `CV · ` channels on Telegram.
+*   **Your code and screenshots**: Stored as messages in your private `TC · ` channels on Telegram.
 *   **API ID and API Hash**: Saved only inside the PIN-encrypted login on this device (never as plain text). They are erased when you sign out, so the next sign-in on that device starts with an empty "Connect your Telegram" page and you paste them once. The Android app keeps its own copy, separate from other browsers.
 *   **Login session**: Saved in this browser's `localStorage` only, and **encrypted with your 6-digit PIN** (AES-GCM, key made with PBKDF2), together with the API keys. Each browser or device signs in on its own.
-*   **PIN lock**: After your first sign-in you create a 6-digit PIN. Code Vault creates a private channel called **Private PIN for Tele Cloud** in your own Telegram (once) and saves a scrambled hash of the PIN there, never the PIN itself. On a new device you sign in with your login code and then enter the same PIN, so you create it only once. Every time you open the app on a device, it asks for the PIN first and checks it on the device. Do not delete or edit that channel.
+*   **PIN lock**: After your first sign-in you create a 6-digit PIN. Telecloud creates a private channel called **Private PIN for Tele Cloud** in your own Telegram (once) and saves a scrambled hash of the PIN there, never the PIN itself. On a new device you sign in with your login code and then enter the same PIN, so you create it only once. Every time you open the app on a device, it asks for the PIN first and checks it on the device. Do not delete or edit that channel.
 *   **Wrong PINs**: After 3 wrong PINs you must wait (30 seconds, doubling each time, up to 1 hour). After 10 wrong PINs the saved login is deleted and you are signed out.
 *   **Screenshots**: Shrunk to at most 1600 px and sent as JPEG before upload.
 *   **Questions**: Text longer than about 3,900 characters is cut.
@@ -111,12 +111,12 @@ When you open the site, Code Vault reads your channels that start with `CV · ` 
 *   An internet connection.
 
 ### How to Obtain Telegram API Credentials
-Code Vault needs your own API credentials to connect to Telegram. This is free and takes about 2 minutes:
+Telecloud needs your own API credentials to connect to Telegram. This is free and takes about 2 minutes:
 1. Go to [my.telegram.org](https://my.telegram.org/) and log in with your phone number.
 2. Select **API development tools**.
 3. Fill in the form (an app title and short name of your choice).
 4. Copy the **App api_id** and **App api_hash**.
-5. Paste them into the first screen of Code Vault.
+5. Paste them into the first screen of Telecloud.
 
 > [!NOTE]
 > These credentials stay in your browser. The app does not send them to any server other than Telegram.
@@ -128,17 +128,17 @@ Code Vault needs your own API credentials to connect to Telegram. This is free a
 4. If you use two-step verification, enter your password.
 
 ### Creating Folders and Entries
-1. Press **New folder**, type a name, and confirm. A private channel named `CV · <name>` is created in your Telegram.
+1. Press **New folder**, type a name, and confirm. A private channel named `TC · <name>` is created in your Telegram.
 2. Open the folder and add an entry: write a title, choose the language, add tags, paste your code, and optionally add the question and screenshots.
 3. Press **Save to Telegram**. The entry appears in the folder with the date and time.
 
 ### Install as an App
-Open the browser menu and choose **Install app** or **Add to Home screen**. Code Vault then opens in its own window.
+Open the browser menu and choose **Install app** or **Add to Home screen**. Telecloud then opens in its own window.
 
 ### Android APK
 1. Download the `.apk` file from the [Releases](https://github.com/jony99jrn/telecloud/releases) page onto your phone.
 2. Tap the file. If Android blocks it, allow **Install unknown apps** for the app you opened it from, then tap Install.
-3. Open **Code Vault** and sign in with your API ID, API Hash, phone number and login code. Your folders and entries appear, because they are stored in your Telegram.
+3. Open **Telecloud** and sign in with your API ID, API Hash, phone number and login code. Your folders and entries appear, because they are stored in your Telegram.
 
 > [!NOTE]
 > The first time you open the app, Android may show "Running in Chrome" with a note about site data. This is normal: the app runs the website through Chrome, so its sign-in data is kept in Chrome's storage for this site.
@@ -217,8 +217,8 @@ The APK is made from the live website with [PWABuilder](https://www.pwabuilder.c
 
 *   **Folder was not created**: Telegram limits how fast channels can be created. If the message asks you to wait, wait that long and try again. Also check that your account does not already have too many channels.
 *   **Login code does not arrive**: Telegram limits how often it sends codes. Wait a few minutes and try again, and check that the API ID and API Hash match the ones on `my.telegram.org`.
-*   **Folders or entries are missing**: Do not rename or delete the `CV · ` channels or the messages inside them in Telegram itself, or Code Vault will not find them.
-*   **"New login" notice from Telegram**: This is expected. It is Code Vault signing in to your account.
+*   **Folders or entries are missing**: Do not rename or delete the `TC · ` channels or the messages inside them in Telegram itself, or Telecloud will not find them.
+*   **"New login" notice from Telegram**: This is expected. It is Telecloud signing in to your account.
 *   **Sign out**: Ends the Telegram session for this app and removes the saved login from this device. Next time you sign in with a login code and enter your PIN (it is not created again).
 *   **Forgot PIN**: Tap "Forgot PIN?" on the PIN screen. Telegram sends you a login code, and after you enter it you create a new PIN. The new PIN replaces the old one on all your devices. Your folders and code stay safe in Telegram.
 *   **Old version after an update**: Close and reopen the tab or the app (sometimes twice), or clear the site data in your browser, so the new files load.
