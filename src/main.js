@@ -156,7 +156,7 @@ async function loadProfile() {
 
 function header() {
   if (S.authed && !S.profile) loadProfile();
-  return `<div class="topbar"><a class="brand" href="#/"><span class="logo">${I.logo}</span>Code Vault</a>
+  return `<div class="topbar"><a class="brand" href="#/"><span class="logo">${I.logo}</span>Telecloud</a>
 <div class="top-actions"><a class="avatar" href="#/profile" data-avatar aria-label="Your profile" title="Your profile">${avatarInner()}</a></div></div>`;
 }
 
@@ -251,8 +251,8 @@ const GUIDE = [
   },
   {
     t: 'Create an application',
-    d: 'Fill App title and Short name with anything you like, for example “Code Vault”. Choose “Other” as the platform and press Create application.',
-    v: `<div class="m-field">App title: Code Vault</div><div class="m-field">Short name: codevault</div><div class="m-field">Platform: Other</div><div class="m-btn">Create application</div>`,
+    d: 'Fill App title and Short name with anything you like, for example “Telecloud”. Choose “Other” as the platform and press Create application.',
+    v: `<div class="m-field">App title: Telecloud</div><div class="m-field">Short name: telecloud</div><div class="m-field">Platform: Other</div><div class="m-btn">Create application</div>`,
   },
   {
     t: 'Copy your API ID and API Hash',
@@ -315,7 +315,7 @@ function renderLogin(busy = false) {
   }
 
   app.innerHTML = `<div class="login-wrap">
-<div class="login-top brand"><span class="logo">${I.logo}</span>Code Vault</div>
+<div class="login-top brand"><span class="logo">${I.logo}</span>Telecloud</div>
 <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
 <form class="login-card" id="login-form">
 <div class="login-icon">${I.enter}</div>
@@ -1030,7 +1030,7 @@ async function renderEdit(fid, entryId) {
 
 function pinShell(icon, title, lead, body, error, cta, busy, extra = '') {
   app.innerHTML = `<div class="login-wrap">
-<div class="login-top brand"><span class="logo">${I.logo}</span>Code Vault</div>
+<div class="login-top brand"><span class="logo">${I.logo}</span>Telecloud</div>
 <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
 <form class="login-card" id="pin-form" autocomplete="off">
 <div class="login-icon">${icon}</div>
@@ -1063,7 +1063,7 @@ function askNewPin(save) {
       pinShell(
         I.lock,
         'Create a 6-digit PIN',
-        'The PIN is saved, scrambled, in a private channel in your own Telegram, so the same PIN works on all your devices. It also locks Code Vault on this device. It cannot be recovered, but you can reset it with a Telegram login code.',
+        'The PIN is saved, scrambled, in a private channel in your own Telegram, so the same PIN works on all your devices. It also locks Telecloud on this device. It cannot be recovered, but you can reset it with a Telegram login code.',
         pinField('p1', 'New PIN', true, 'new-password') + pinField('p2', 'Repeat PIN', false, 'new-password'),
         error,
         'Save PIN',
@@ -1161,7 +1161,7 @@ function askPinScreen({ lead, status, check, forgot }) {
 // Resolves true when unlocked, false when the saved login was removed (forgot PIN or too many tries).
 async function askUnlock() {
   const r = await askPinScreen({
-    lead: 'Code Vault is locked. Type your 6-digit PIN to continue.',
+    lead: 'Telecloud is locked. Type your 6-digit PIN to continue.',
     status: () => tg.lockStatus('local'),
     check: (pin) => tg.unlock(pin),
     forgot: {
