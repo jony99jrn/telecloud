@@ -1,7 +1,7 @@
-// Telegram storage layer for Code Vault.
+// Telegram storage layer for Telecloud.
 //
 // Layout inside your own Telegram account:
-//   folder = a private channel whose title starts with "CV · "
+//   folder = a private channel whose title starts with "TC · "
 //   entry  = 1 document message (the code file, caption "#cv {json}")
 //          + 1 optional text message ("#cvq <id>" + the question)
 //          + 1 optional photo/album (caption "#cvi <id>", the screenshots)
@@ -12,7 +12,8 @@ import { CustomFile } from 'telegram/client/uploads';
 import { Buffer } from 'buffer';
 import * as lock from './lock.js';
 
-const PREFIX = 'CV · ';
+const PREFIX = 'TC · ';
+const LEGACY_PREFIX = 'CV · '; // old folders still show until you rename them to TC
 const LS = { id: 'cv_api_id', hash: 'cv_api_hash', session: 'cv_session' };
 
 export const LANGUAGES = ['C', 'C++', 'Java', 'Python', 'JavaScript', 'SQL', 'HTML/CSS', 'Other'];
@@ -128,7 +129,7 @@ export function resetLock() {
 /* ---------- PIN saved in your Telegram (private channel) ---------- */
 
 // Holds one message "#cvpin {json}" with a salted hash of the PIN, never the PIN.
-// The title must NOT start with "CV · ", or it would show up as a code folder.
+// The title must NOT start with "TC · " or "CV · ", or it would show up as a code folder.
 export const PIN_CHANNEL = 'Private PIN for Tele Cloud';
 
 export const verifyRemotePin = lock.verifyRemote;
@@ -151,7 +152,7 @@ async function createPinChannel() {
     res = await client.invoke(
       new Api.channels.CreateChannel({
         title: PIN_CHANNEL,
-        about: 'Created by Code Vault. Keeps a scrambled check of your PIN so it works on all your devices. Do not delete.',
+        about: 'Created by Telecloud. Keeps a scrambled check of your PIN so it works on all your devices. Do not delete.',
         broadcast: true,
         megagroup: false,
       })
@@ -351,8 +352,11 @@ export async function listFolders() {
   const folders = [];
   for (const d of dialogs) {
     const e = d.entity;
-    if (e && e.className === 'Channel' && e.broadcast && (e.title || '').startsWith(PREFIX)) {
-      folders.push({ id: String(e.id), entity: e, name: e.title.slice(PREFIX.length), count: 0, last: null });
+    if (!e || e.className !== 'Channel' || !e.broadcast) continue;
+    const title = e.title || '';
+    const pre = title.startsWith(PREFIX) ? PREFIX : title.startsWith(LEGACY_PREFIX) ? LEGACY_PREFIX : null;
+    if (pre) {
+      folders.push({ id: String(e.id), entity: e, name: title.slice(pre.length), count: 0, last: null });
     }
   }
   await pool(folders, 4, countFor);
@@ -375,7 +379,7 @@ export async function createFolder(name) {
     res = await client.invoke(
       new Api.channels.CreateChannel({
         title: PREFIX + clean,
-        about: 'Code Vault folder. Created by Code Vault.',
+        about: 'Telecloud folder. Created by Telecloud.',
         broadcast: true,
         megagroup: false,
       })
