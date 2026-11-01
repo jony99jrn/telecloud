@@ -1286,7 +1286,8 @@ window.addEventListener('hashchange', route);
 (async function start() {
   if (tg.hasSession()) {
     if (tg.hasLockedLogin()) {
-      if (!(await askUnlock())) return route(); // login was removed, show the sign-in screen
+      // a refresh keeps this tab unlocked; opening the app again asks for the PIN
+      if (!(await tg.autoUnlock()) && !(await askUnlock())) return route(); // login was removed, show the sign-in screen
       app.innerHTML = `<div class="login-wrap"><div class="loading">Connecting to Telegram…</div></div>`;
       S.authed = await tg.restore();
     } else {
