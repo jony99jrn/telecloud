@@ -26,6 +26,7 @@ const I = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>',
+  android: '<svg viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M7 8a5 5 0 0 1 10 0zM9.6 6.2a.6.6 0 1 0 1.2 0 .6.6 0 1 0-1.2 0zM13.2 6.2a.6.6 0 1 0 1.2 0 .6.6 0 1 0-1.2 0z"/><path d="M7 9h10v8a1.5 1.5 0 0 1-1.5 1.5H15V21a1.2 1.2 0 0 1-2.4 0v-2.5h-1.2V21a1.2 1.2 0 0 1-2.4 0v-2.5h-.5A1.5 1.5 0 0 1 7 17zM5 9.5a1.1 1.1 0 0 1 2.2 0v5a1.1 1.1 0 0 1-2.2 0zM16.8 9.5a1.1 1.1 0 0 1 2.2 0v5a1.1 1.1 0 0 1-2.2 0z"/><path d="M9 2.6l1.1 1.5M15 2.6l-1.1 1.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 015.5 5H9l2 2.5h7.5A2.5 2.5 0 0121 10v7.5a2.5 2.5 0 01-2.5 2.5h-13A2.5 2.5 0 013 17.5z"/></svg>',
   chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>',
@@ -170,7 +171,7 @@ function canOfferApk() {
 }
 function apkHeaderLink() {
   return canOfferApk()
-    ? `<a class="dl-btn" href="${APK_URL}" rel="noopener" aria-label="Download the Android app" title="Download the Android app">${I.download}<span>Get the app</span></a>`
+    ? `<a class="dl-btn" href="${APK_URL}" rel="noopener" aria-label="Download the Android app" title="Download the Android app">${I.android}<span>Get app</span></a>`
     : '';
 }
 
@@ -348,7 +349,7 @@ ${
     ? `<div class="divider">Where do I find these?</div>
 <button type="button" class="ext ext-guide" data-guide>${I.help}Show me step by step</button>
 <a class="ext" href="https://my.telegram.org" target="_blank" rel="noopener" style="margin-top:10px">${I.ext}Open my.telegram.org</a>
-${canOfferApk() ? `<a class="ext" href="${APK_URL}" rel="noopener" style="margin-top:10px">${I.download}Download the Android app</a>` : ''}`
+${canOfferApk() ? `<a class="apk-card" href="${APK_URL}" rel="noopener"><span class="apk-ic">${I.android}</span><span class="apk-tx"><b>Download the Android app</b><small>Free Android app (APK)</small></span><span class="apk-go">${I.download}</span></a>` : ''}`
     : `<div style="margin-top:12px"><button type="button" class="link-btn" data-back>Back</button></div>`
 }
 <div class="steps">${dots}</div>
