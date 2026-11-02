@@ -335,9 +335,9 @@ function renderLogin(busy = false) {
   }
 
   app.innerHTML = `<div class="login-wrap">
-<div class="login-top brand"><span class="logo">${I.logo}</span>Telecloud</div>
 <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
 <form class="login-card" id="login-form">
+<div class="login-top brand"><span class="logo">${I.logo}</span>Telecloud</div>
 <div class="login-icon">${I.enter}</div>
 <h1>${title}</h1><p class="lead">${lead}</p>
 ${body}
@@ -1051,9 +1051,9 @@ async function renderEdit(fid, entryId) {
 
 function pinShell(icon, title, lead, body, error, cta, busy, extra = '') {
   app.innerHTML = `<div class="login-wrap">
-<div class="login-top brand"><span class="logo">${I.logo}</span>Telecloud</div>
 <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
 <form class="login-card" id="pin-form" autocomplete="off">
+<div class="login-top brand"><span class="logo">${I.logo}</span>Telecloud</div>
 <div class="login-icon">${icon}</div>
 <h1>${title}</h1><p class="lead">${lead}</p>
 ${body}
