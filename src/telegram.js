@@ -437,6 +437,7 @@ export async function loadEntries(folder) {
           title: meta.t || 'Untitled',
           lang: meta.l || 'Other',
           tags: meta.g || [],
+          sub: cleanSub(meta.d),
           ts: meta.ts || m.date * 1000,
           lines: meta.n || 0,
           shotCount: meta.s || 0,
@@ -492,6 +493,88 @@ export async function loadEntries(folder) {
   return list;
 }
 
+/* ---------- subfolders ---------- */
+
+// A subfolder is just a name in the "d" field of an entry's #cv caption. "" means no subfolder.
+export function cleanSub(name) {
+  return String(name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+}
+
+// Subfolders that have no entry yet are remembered in this browser until the first entry uses them.
+const subKey = (fid) => 'tc_subs_' + fid;
+
+function readLocalSubs(fid) {
+  try {
+    const a = JSON.parse(localStorage.getItem(subKey(fid)) || '[]');
+    return Array.isArray(a) ? a.map(cleanSub).filter(Boolean) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function addLocalSub(fid, name) {
+  const n = cleanSub(name);
+  if (!n) return;
+  const list = readLocalSubs(fid);
+  if (!list.some((x) => x.toLowerCase() === n.toLowerCase())) list.push(n);
+  try {
+    localStorage.setItem(subKey(fid), JSON.stringify(list));
+  } catch (e) {
+    /* storage blocked: the subfolder still appears once an entry uses it */
+  }
+}
+
+export function removeLocalSub(fid, name) {
+  const key = cleanSub(name).toLowerCase();
+  try {
+    localStorage.setItem(subKey(fid), JSON.stringify(readLocalSubs(fid).filter((x) => x.toLowerCase() !== key)));
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+/** All subfolder names of a folder: the ones entries use, plus the empty ones made here. Sorted A to Z. */
+export function listSubs(fid, entries) {
+  const seen = new Map();
+  for (const e of entries || []) if (e.sub) seen.set(e.sub.toLowerCase(), e.sub);
+  for (const n of readLocalSubs(fid)) if (!seen.has(n.toLowerCase())) seen.set(n.toLowerCase(), n);
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
+
+// The #cv caption of an entry, with the subfolder set to `sub`.
+function metaOf(entry, sub) {
+  const meta = {
+    id: entry.id,
+    t: entry.title.slice(0, 120),
+    l: entry.lang,
+    g: entry.tags.slice(0, 8).map((t) => t.slice(0, 24)),
+    ts: entry.ts,
+    n: entry.lines,
+    s: entry.shotCount,
+  };
+  const d = cleanSub(sub);
+  if (d) meta.d = d;
+  return '#cv ' + JSON.stringify(meta);
+}
+
+/**
+ * Moves entries into a subfolder ("" = out of any subfolder) by rewriting only their captions.
+ * The code files, questions and screenshots are not touched. onProgress(done, total) is optional.
+ */
+export async function moveEntries(folder, entries, sub, onProgress) {
+  const target = cleanSub(sub);
+  let done = 0;
+  for (const entry of entries) {
+    if (entry.sub !== target) {
+      await safeEdit(folder.entity, { message: entry.codeMsg.id, text: metaOf(entry, target) });
+      entry.sub = target;
+    }
+    done++;
+    if (onProgress) onProgress(done, entries.length);
+  }
+  if (target) addLocalSub(folder.id, target);
+}
+
 function rid() {
   return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
 }
@@ -516,7 +599,7 @@ async function shrinkImage(file, maxSide = 1600) {
   return Buffer.from(await blob.arrayBuffer());
 }
 
-export async function addEntry(folder, { title, question, lang, tags, files, code }) {
+export async function addEntry(folder, { title, question, lang, tags, files, code, sub }) {
   const id = rid();
   const meta = {
     id,
@@ -527,6 +610,7 @@ export async function addEntry(folder, { title, question, lang, tags, files, cod
     n: code.split('\n').length,
     s: files.length,
   };
+  if (cleanSub(sub)) meta.d = cleanSub(sub);
   const buf = Buffer.from(code, 'utf8');
   const name = `${slug(title)}.${EXT[lang] || 'txt'}`;
   await client.sendFile(folder.entity, {
@@ -578,7 +662,7 @@ async function safeEdit(entity, params) {
   }
 }
 
-export async function editEntry(folder, entry, { title, question, lang, tags, code, newFiles, keepShotIds }) {
+export async function editEntry(folder, entry, { title, question, lang, tags, code, newFiles, keepShotIds, sub }) {
   const id = entry.id;
   const ent = folder.entity;
   const oldCode = await getCode(entry);
@@ -633,6 +717,8 @@ export async function editEntry(folder, entry, { title, question, lang, tags, co
     n: code.split('\n').length,
     s: kept.length + newFiles.length,
   };
+  const newSub = cleanSub(sub === undefined ? entry.sub : sub);
+  if (newSub) meta.d = newSub;
   const caption = '#cv ' + JSON.stringify(meta);
   if (code !== oldCode || title !== entry.title || lang !== entry.lang) {
     const buf = Buffer.from(code, 'utf8');
