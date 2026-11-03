@@ -28,6 +28,7 @@ const I = {
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>',
   android: '<svg viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M7 8a5 5 0 0 1 10 0zM9.6 6.2a.6.6 0 1 0 1.2 0 .6.6 0 1 0-1.2 0zM13.2 6.2a.6.6 0 1 0 1.2 0 .6.6 0 1 0-1.2 0z"/><path d="M7 9h10v8a1.5 1.5 0 0 1-1.5 1.5H15V21a1.2 1.2 0 0 1-2.4 0v-2.5h-1.2V21a1.2 1.2 0 0 1-2.4 0v-2.5h-.5A1.5 1.5 0 0 1 7 17zM5 9.5a1.1 1.1 0 0 1 2.2 0v5a1.1 1.1 0 0 1-2.2 0zM16.8 9.5a1.1 1.1 0 0 1 2.2 0v5a1.1 1.1 0 0 1-2.2 0z"/><path d="M9 2.6l1.1 1.5M15 2.6l-1.1 1.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 015.5 5H9l2 2.5h7.5A2.5 2.5 0 0121 10v7.5a2.5 2.5 0 01-2.5 2.5h-13A2.5 2.5 0 013 17.5z"/></svg>',
+  dots: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="12" cy="19" r="1.9"/></svg>',
   chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg>',
@@ -434,6 +435,7 @@ async function finishLogin() {
 /* ================= HOME ================= */
 
 async function renderHome() {
+  S.curSub = {};
   app.innerHTML = `<div class="shell">${header()}
 <div class="head-row"><div><h1 class="title">Your folders</h1>
 <p class="sub">Each folder is a private channel in your Telegram. Open one to see your code.</p></div>
@@ -538,7 +540,94 @@ function matches(e, q) {
   );
 }
 
+/* ================= THREE-DOT MENU AND SUBFOLDER PICKER ================= */
+
+const NEW_SUB = '\u0000new';
+
+function closeMenu() {
+  document.querySelectorAll('.menu').forEach((m) => {
+    if (m._off) m._off();
+    m.remove();
+  });
+}
+
+// A small menu next to a button. items: [{ label, icon, danger, fn }]. Tapping the same button again closes it.
+function openMenu(btn, items) {
+  const open = [...document.querySelectorAll('.menu')].find((m) => m._btn === btn);
+  closeMenu();
+  if (open) return;
+  const m = document.createElement('div');
+  m.className = 'menu';
+  m.setAttribute('role', 'menu');
+  m.innerHTML = items
+    .map((it, i) => `<button type="button" role="menuitem" class="${it.danger ? 'danger' : ''}" data-i="${i}">${it.icon || ''}<span>${esc(it.label)}</span></button>`)
+    .join('');
+  document.body.appendChild(m);
+  const r = btn.getBoundingClientRect();
+  const w = m.offsetWidth;
+  const h = m.offsetHeight;
+  const left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  m.style.left = left + 'px';
+  m.style.top = top + 'px';
+  m._btn = btn;
+  m.querySelectorAll('button').forEach((b) => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      closeMenu();
+      items[+b.dataset.i].fn();
+    };
+  });
+  const onDown = (ev) => {
+    if (!m.contains(ev.target) && !btn.contains(ev.target)) closeMenu();
+  };
+  const onKey = (ev) => ev.key === 'Escape' && closeMenu();
+  document.addEventListener('pointerdown', onDown, true);
+  document.addEventListener('keydown', onKey);
+  window.addEventListener('resize', closeMenu);
+  window.addEventListener('scroll', closeMenu, true);
+  m._off = () => {
+    document.removeEventListener('pointerdown', onDown, true);
+    document.removeEventListener('keydown', onKey);
+    window.removeEventListener('resize', closeMenu);
+    window.removeEventListener('scroll', closeMenu, true);
+  };
+}
+
+// Asks where to put entries. Resolves to the subfolder name, "" (no subfolder), or null if cancelled.
+async function pickSub({ title, text, subs, current }) {
+  const opts = [{ v: '', label: 'No subfolder (main folder)' }, ...subs.map((s) => ({ v: s, label: s })), { v: NEW_SUB, label: 'New subfolder…' }];
+  const choice = await new Promise((resolve) => {
+    const back = document.createElement('div');
+    back.className = 'modal-back';
+    back.innerHTML = `<div class="modal"><h3>${esc(title)}</h3>${text ? `<p>${esc(text)}</p>` : ''}
+<div class="picklist">${opts
+      .map((o, i) => {
+        const isNew = o.v === NEW_SUB;
+        const on = !isNew && o.v === (current || '');
+        return `<button type="button" class="pick ${on ? 'on' : ''} ${isNew ? 'new' : ''}" data-i="${i}">${isNew ? I.plus : I.folder}<span>${esc(o.label)}</span>${on ? '<em>current</em>' : ''}</button>`;
+      })
+      .join('')}</div>
+<div class="btns"><button type="button" class="btn btn-light btn-small" data-x>Cancel</button></div></div>`;
+    document.body.appendChild(back);
+    const done = (v) => {
+      back.remove();
+      resolve(v);
+    };
+    back.querySelectorAll('.pick').forEach((b) => (b.onclick = () => done(opts[+b.dataset.i].v)));
+    $('[data-x]', back).onclick = () => done(null);
+    back.addEventListener('mousedown', (e) => e.target === back && done(null));
+  });
+  if (choice !== NEW_SUB) return choice;
+  const name = await modal({ title: 'New subfolder', text: 'It appears in this folder once something is saved in it.', input: true, placeholder: 'e.g. Lab 3', confirm: 'Create' });
+  const clean = tg.cleanSub(name);
+  return clean || null;
+}
+
 /* ================= FOLDER ================= */
+
+const entriesWord = (n) => plural(n, 'entry').replace('entrys', 'entries');
 
 async function renderFolder(fid, entryId) {
   await ensureFolders().catch(() => {});
@@ -547,16 +636,32 @@ async function renderFolder(fid, entryId) {
     location.hash = '#/';
     return;
   }
+  S.curSub = S.curSub || {};
+  let cur = S.curSub[fid] ?? null; // null = top level of the folder, else the open subfolder
+  let selecting = false;
+  const picked = new Set();
+  let visible = [];
 
   app.innerHTML = `<div class="shell">${header()}
-<a class="back" href="#/">${I.back}All folders</a>
+<a class="back" id="backlink" href="#/">${I.back}All folders</a>
 <div class="head-row"><div class="folder-head"><span class="ficon big">${I.folder}</span>
-<div><h1>${esc(folder.name)}</h1><p id="count">Stored in a private Telegram channel.</p></div></div>
-<a class="btn" href="#/f/${fid}/new">${I.plus}Add entry</a></div>
+<div><h1 id="ftitle">${esc(folder.name)}</h1><p id="count">Stored in a private Telegram channel.</p></div></div>
+<div class="head-btns"><button class="btn btn-light" id="selbtn">${I.check}Select</button>
+<button class="btn btn-light" id="newsub">${I.folder}New subfolder</button>
+<a class="btn" href="#/f/${fid}/new">${I.plus}Add entry</a></div></div>
 <label class="searchbar">${I.search}<input id="q" placeholder="Search by title, question, tag or code" autocomplete="off" /></label>
 <div id="out"><div class="loading">Loading entries…</div></div>
-<div class="footer-actions"><button class="link-btn danger" id="delfolder">Delete this folder</button></div></div>`;
+<div class="footer-actions"><button class="link-btn danger" id="delfolder">Delete this folder</button></div></div>
+<div class="selbar" id="selbar" hidden><span id="selcount">0 selected</span>
+<div class="btns"><button class="btn btn-light btn-small" id="selall">Select all</button>
+<button class="btn btn-small" id="selmove">${I.folder}Move</button>
+<button class="btn btn-light btn-small" id="selcancel">Cancel</button></div></div>`;
   bindShared(app);
+  S.cleanup = () => {
+    closeMenu();
+    const bar = $('#selbar');
+    if (bar) bar.remove();
+  };
 
   $('#delfolder').onclick = async () => {
     const ok = await modal({
@@ -583,7 +688,6 @@ async function renderFolder(fid, entryId) {
     return;
   }
   const entries = S.entries[fid];
-  $('#count').textContent = `${plural(entries.length, 'entry').replace('entrys', 'entries')}. Stored in a private Telegram channel.`;
 
   let codesLoading = null;
   const loadCodes = () =>
@@ -597,37 +701,196 @@ async function renderFolder(fid, entryId) {
       }
     })());
 
-  const draw = () => {
-    const q = $('#q').value.trim().toLowerCase();
-    const list = entries.filter((e) => !q || matches(e, q));
-    if (!entries.length) {
-      $('#out').innerHTML = `<div class="empty">Nothing here yet. Tap “Add entry” to save your first code.</div>`;
-      return;
-    }
-    if (!list.length) {
-      $('#out').innerHTML = `<div class="empty">No entries match “${esc(q)}”.</div>`;
-      return;
-    }
-    $('#out').innerHTML = `<div class="grid">${list
-      .map(
-        (e) => `<div class="card entry" data-id="${e.id}">
-<div class="row"><span class="badge">${esc(BADGE[e.lang] || 'Txt')}</span><span class="date">${fmtDate(e.ts)}</span></div>
-<h3>${esc(e.title)}</h3>
-<div class="meta">${plural(e.lines, 'line')}${e.shotCount ? ' · ' + plural(e.shotCount, 'screenshot') : ''}</div>
-${e.tags.length ? `<div class="tags">${e.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
-<div class="actions"><a class="btn btn-light btn-small" href="#/f/${fid}/e/${e.id}">Open</a>
-<a class="btn btn-light btn-small" href="#/f/${fid}/edit/${e.id}">${I.edit}Edit</a>
-<button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy </button></div></div>`
-      )
-      .join('')}</div>`;
+  const inSub = (e, name) => e.sub.toLowerCase() === name.toLowerCase();
 
-    // the whole card opens the entry, not just the Open button
-    $('#out').querySelectorAll('.entry').forEach((c) => {
-      const go = () => (location.hash = `#/f/${fid}/e/${c.dataset.id}`);
-      c.tabIndex = 0;
-      c.setAttribute('role', 'link');
+  const copyEntry = async (e) => {
+    try {
+      const ok = await copyText(tg.getCode(e));
+      toast(ok ? 'Code copied' : 'Could not copy. Open the entry and select the code.');
+    } catch (err) {
+      toast('Could not read this code. ' + tg.friendlyError(err));
+    }
+  };
+
+  const syncSel = () => {
+    $('#selbar').hidden = !selecting;
+    $('#selcount').textContent = `${picked.size} selected`;
+    $('#selmove').disabled = !picked.size;
+    $('#selall').textContent = picked.size && picked.size === visible.length ? 'Clear' : 'Select all';
+    $('#selbtn').innerHTML = selecting ? `${I.x}Done` : `${I.check}Select`;
+    $('#out').classList.toggle('pad-sel', selecting);
+  };
+
+  const setSelecting = (on) => {
+    selecting = on;
+    if (!on) picked.clear();
+    draw();
+  };
+
+  // Moves entries into a subfolder: asks where, then rewrites only their captions.
+  const moveFlow = async (list) => {
+    if (!list.length) return;
+    const subs = tg.listSubs(fid, entries);
+    const here = list.every((e) => e.sub === list[0].sub) ? list[0].sub : '';
+    const target = await pickSub({
+      title: list.length === 1 ? 'Move to subfolder' : `Move ${list.length} entries`,
+      text: 'Only the caption of each entry changes. Your code, questions and screenshots stay as they are.',
+      subs,
+      current: here,
+    });
+    if (target === null) return;
+    try {
+      toast(`Moving ${list.length === 1 ? 'entry' : 'entries'}…`, 0);
+      await tg.moveEntries(folder, list, target, (d, t) => t > 1 && toast(`Moving ${d} of ${t}…`, 0));
+      toast(target ? `Moved to “${target}”` : 'Moved to the main folder');
+      if (selecting) {
+        selecting = false;
+        picked.clear();
+      }
+    } catch (err) {
+      toast(tg.friendlyError(err));
+    }
+    draw();
+  };
+
+  const deleteOne = async (e) => {
+    const ok = await modal({ title: 'Delete this entry?', text: 'It will also be removed from your Telegram channel.', confirm: 'Delete' });
+    if (!ok) return;
+    try {
+      await tg.deleteEntry(folder, e);
+      entries.splice(entries.indexOf(e), 1);
+      picked.delete(e.id);
+      folder.count = entries.length;
+      toast('Entry deleted');
+    } catch (err) {
+      toast(tg.friendlyError(err));
+    }
+    draw();
+  };
+
+  const subMenu = (btn, name) =>
+    openMenu(btn, [
+      {
+        label: 'Rename',
+        icon: I.edit,
+        fn: async () => {
+          const next = tg.cleanSub(await modal({ title: 'Rename subfolder', input: true, placeholder: name, confirm: 'Rename' }));
+          if (!next || next === name) return;
+          try {
+            toast('Renaming…', 0);
+            await tg.moveEntries(folder, entries.filter((e) => inSub(e, name)), next);
+            tg.removeLocalSub(fid, name);
+            tg.addLocalSub(fid, next);
+            toast('Subfolder renamed');
+          } catch (err) {
+            toast(tg.friendlyError(err));
+          }
+          draw();
+        },
+      },
+      {
+        label: 'Remove subfolder',
+        icon: I.trash,
+        danger: true,
+        fn: async () => {
+          const ok = await modal({
+            title: `Remove “${name}”?`,
+            text: 'Its entries are not deleted. They move back to the main folder.',
+            confirm: 'Remove',
+          });
+          if (!ok) return;
+          try {
+            toast('Removing…', 0);
+            await tg.moveEntries(folder, entries.filter((e) => inSub(e, name)), '');
+            tg.removeLocalSub(fid, name);
+            toast('Subfolder removed');
+          } catch (err) {
+            toast(tg.friendlyError(err));
+          }
+          draw();
+        },
+      },
+    ]);
+
+  const subCard = (name, i) => {
+    const n = entries.filter((e) => inSub(e, name)).length;
+    return `<div class="card folder subcard" data-sub="${i}" tabindex="0" role="link">
+<div class="row"><span class="ficon">${I.folder}</span><button type="button" class="dots" data-subdots="${i}" aria-label="Subfolder options">${I.dots}</button></div>
+<div class="info"><h3>${esc(name)}</h3><div class="meta">${n ? entriesWord(n) : 'Empty'}</div></div><span class="chev">${I.chev}</span></div>`;
+  };
+
+  const entryCard = (e, showSub) => `<div class="card entry${selecting ? ' selectable' : ''}${picked.has(e.id) ? ' picked' : ''}" data-id="${e.id}">
+<div class="row"><span class="badge">${esc(BADGE[e.lang] || 'Txt')}</span><span class="date">${fmtDate(e.ts)}</span>
+${selecting ? `<span class="chk" aria-hidden="true">${I.check}</span>` : `<button type="button" class="dots" data-dots="${e.id}" aria-label="More options">${I.dots}</button>`}</div>
+<h3>${esc(e.title)}</h3>
+<div class="meta">${plural(e.lines, 'line')}${e.shotCount ? ' · ' + plural(e.shotCount, 'screenshot') : ''}${showSub && e.sub ? ` · <span class="subchip">${I.folder}${esc(e.sub)}</span>` : ''}</div>
+${e.tags.length ? `<div class="tags">${e.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
+${
+  selecting
+    ? ''
+    : `<div class="actions"><a class="btn btn-light btn-small" href="#/f/${fid}/e/${e.id}">Open</a>
+<a class="btn btn-light btn-small" href="#/f/${fid}/edit/${e.id}">${I.edit}Edit</a>
+<button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy </button></div>`
+}</div>`;
+
+  function draw() {
+    closeMenu();
+    const q = $('#q').value.trim().toLowerCase();
+    const subs = tg.listSubs(fid, entries);
+    if (cur !== null && !subs.some((s) => s.toLowerCase() === cur.toLowerCase()) && !entries.some((e) => inSub(e, cur))) cur = null;
+    S.curSub[fid] = cur;
+
+    const back = $('#backlink');
+    back.innerHTML = cur !== null ? `${I.back}${esc(folder.name)}` : `${I.back}All folders`;
+    back.onclick = (ev) => {
+      if (cur === null) return;
+      ev.preventDefault();
+      cur = null;
+      picked.clear();
+      draw();
+    };
+    $('#ftitle').textContent = cur !== null ? cur : folder.name;
+    $('#count').textContent =
+      cur !== null
+        ? `Subfolder of ${folder.name}.`
+        : `${entriesWord(entries.length)}${subs.length ? ' · ' + plural(subs.length, 'subfolder') : ''}. Stored in a private Telegram channel.`;
+    $('#newsub').hidden = cur !== null;
+    const addLink = $('.head-btns a.btn');
+    addLink.href = `#/f/${fid}/new`;
+
+    visible = q ? entries.filter((e) => matches(e, q)) : cur === null ? entries.filter((e) => !e.sub) : entries.filter((e) => inSub(e, cur));
+
+    let html = '';
+    const showSubCards = !q && cur === null && subs.length > 0;
+    if (!entries.length && !subs.length) {
+      $('#out').innerHTML = `<div class="empty">Nothing here yet. Tap “Add entry” to save your first code.</div>`;
+      syncSel();
+      return;
+    }
+    if (showSubCards) html += `<h2 class="section-title">Subfolders</h2><div class="grid">${subs.map(subCard).join('')}</div>`;
+    if (visible.length) {
+      if (showSubCards) html += `<h2 class="section-title">Entries</h2>`;
+      html += `<div class="grid">${visible.map((e) => entryCard(e, !!q)).join('')}</div>`;
+    } else if (q) {
+      html += `<div class="empty">No entries match “${esc(q)}”.</div>`;
+    } else if (cur !== null) {
+      html += `<div class="empty">This subfolder is empty. Select entries in the folder and move them here, or tap “Add entry”.</div>`;
+    }
+    $('#out').innerHTML = html;
+
+    // subfolder cards
+    $('#out').querySelectorAll('.subcard').forEach((c) => {
+      const name = subs[+c.dataset.sub];
+      const go = () => {
+        cur = name;
+        picked.clear();
+        selecting = false;
+        $('#q').value = '';
+        draw();
+        window.scrollTo(0, 0);
+      };
       c.onclick = (ev) => {
-        if (ev.target.closest('a,button')) return;
+        if (ev.target.closest('button')) return;
         go();
       };
       c.onkeydown = (ev) => {
@@ -636,23 +899,87 @@ ${e.tags.length ? `<div class="tags">${e.tags.map((t) => `<span class="tag">${es
           go();
         }
       };
+      $('[data-subdots]', c).onclick = (ev) => {
+        ev.stopPropagation();
+        subMenu(ev.currentTarget, name);
+      };
+    });
+
+    // entry cards: the whole card opens the entry, or toggles the tick in select mode
+    $('#out').querySelectorAll('.entry').forEach((c) => {
+      const e = entries.find((x) => x.id === c.dataset.id);
+      if (!e) return;
+      const act = () => {
+        if (selecting) {
+          if (picked.has(e.id)) picked.delete(e.id);
+          else picked.add(e.id);
+          c.classList.toggle('picked', picked.has(e.id));
+          syncSel();
+        } else {
+          location.hash = `#/f/${fid}/e/${e.id}`;
+        }
+      };
+      c.tabIndex = 0;
+      c.setAttribute('role', selecting ? 'checkbox' : 'link');
+      if (selecting) c.setAttribute('aria-checked', picked.has(e.id) ? 'true' : 'false');
+      c.onclick = (ev) => {
+        if (!selecting && ev.target.closest('a,button')) return;
+        act();
+      };
+      c.onkeydown = (ev) => {
+        if (ev.target === c && (ev.key === 'Enter' || ev.key === ' ')) {
+          ev.preventDefault();
+          act();
+        }
+      };
+      const dots = $('[data-dots]', c);
+      if (dots)
+        dots.onclick = (ev) => {
+          ev.stopPropagation();
+          openMenu(ev.currentTarget, [
+            { label: 'Open', icon: I.ext, fn: () => (location.hash = `#/f/${fid}/e/${e.id}`) },
+            { label: 'Edit', icon: I.edit, fn: () => (location.hash = `#/f/${fid}/edit/${e.id}`) },
+            { label: 'Copy code', icon: I.copy, fn: () => copyEntry(e) },
+            { label: 'Move to subfolder', icon: I.folder, fn: () => moveFlow([e]) },
+            {
+              label: 'Select',
+              icon: I.check,
+              fn: () => {
+                selecting = true;
+                picked.add(e.id);
+                draw();
+              },
+            },
+            { label: 'Delete', icon: I.trash, danger: true, fn: () => deleteOne(e) },
+          ]);
+        };
     });
 
     $('#out').querySelectorAll('[data-copy]').forEach((b) => {
-      b.onclick = async () => {
-        const e = entries.find((x) => x.id === b.dataset.copy);
-        try {
-          const ok = await copyText(tg.getCode(e));
-          toast(ok ? 'Code copied' : 'Could not copy. Open the entry and select the code.');
-        } catch (err) {
-          toast('Could not read this code. ' + tg.friendlyError(err));
-        }
-      };
+      b.onclick = () => copyEntry(entries.find((x) => x.id === b.dataset.copy));
     });
-  };
+    syncSel();
+  }
 
   $('#q').oninput = () => {
     loadCodes().then(draw);
+    draw();
+  };
+  $('#selbtn').onclick = () => setSelecting(!selecting);
+  $('#selcancel').onclick = () => setSelecting(false);
+  $('#selall').onclick = () => {
+    if (picked.size && picked.size === visible.length) picked.clear();
+    else visible.forEach((e) => picked.add(e.id));
+    draw();
+  };
+  $('#selmove').onclick = () => moveFlow(entries.filter((e) => picked.has(e.id)));
+  $('#newsub').onclick = async () => {
+    const name = tg.cleanSub(
+      await modal({ title: 'New subfolder', text: 'It appears in this folder once something is saved in it.', input: true, placeholder: 'e.g. Lab 3', confirm: 'Create' })
+    );
+    if (!name) return;
+    tg.addLocalSub(fid, name);
+    toast('Subfolder created');
     draw();
   };
   draw();
@@ -760,6 +1087,39 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
   }
 }
 
+
+/* ---------- subfolder select used by the New and Edit forms ---------- */
+
+function subSelectHtml(fid, entries, selected) {
+  const subs = tg.listSubs(fid, entries);
+  if (selected && !subs.some((s) => s.toLowerCase() === selected.toLowerCase())) subs.push(selected);
+  return `<option value="">No subfolder</option>${subs
+    .map((s) => `<option value="${esc(s)}" ${s.toLowerCase() === (selected || '').toLowerCase() ? 'selected' : ''}>${esc(s)}</option>`)
+    .join('')}<option value="${NEW_SUB}">+ New subfolder…</option>`;
+}
+
+function bindSubSelect(sel) {
+  let last = sel.value;
+  sel.onchange = async () => {
+    if (sel.value !== NEW_SUB) {
+      last = sel.value;
+      return;
+    }
+    const name = tg.cleanSub(await modal({ title: 'New subfolder', input: true, placeholder: 'e.g. Lab 3', confirm: 'Create' }));
+    if (!name) {
+      sel.value = last;
+      return;
+    }
+    let opt = [...sel.options].find((o) => o.value.toLowerCase() === name.toLowerCase());
+    if (!opt) {
+      opt = new Option(name, name);
+      sel.insertBefore(opt, sel.options[sel.options.length - 1]);
+    }
+    sel.value = opt.value;
+    last = sel.value;
+  };
+}
+
 /* ================= NEW ENTRY ================= */
 
 async function renderNew(fid) {
@@ -770,6 +1130,13 @@ async function renderNew(fid) {
     return;
   }
   const files = [];
+  if (!S.entries[fid]) {
+    try {
+      S.entries[fid] = await tg.loadEntries(folder);
+    } catch (e) {
+      /* the subfolder list will just be empty */
+    }
+  }
 
   app.innerHTML = `<div class="shell narrow">${header()}
 <a class="back" href="#/f/${fid}">${I.back}${esc(folder.name)}</a>
@@ -782,6 +1149,7 @@ async function renderNew(fid) {
 <div><label class="lbl" for="l">Language</label><select class="sel" id="l">${tg.LANGUAGES.map((l) => `<option>${esc(l)}</option>`).join('')}</select></div>
 <div><label class="lbl" for="g">Tags <span>(optional, separate with commas)</span></label><input class="in" id="g" placeholder="e.g. loops, week 3, lab 2" /></div>
 </div>
+<div class="block"><label class="lbl" for="sf">Subfolder <span>(optional)</span></label><select class="sel" id="sf">${subSelectHtml(fid, S.entries[fid], (S.curSub || {})[fid] || '')}</select></div>
 <div class="block"><label class="lbl">Screenshots <span>(optional)</span></label>
 <div class="drop" id="drop"><span class="ui">${I.up}</span>
 <div class="txt"><b>Drop images here, or paste with Ctrl+V</b><small>Images are shrunk before they are sent to Telegram.</small></div>
@@ -819,6 +1187,7 @@ async function renderNew(fid) {
     drawThumbs();
   };
 
+  bindSubSelect($('#sf'));
   $('#browse').onclick = () => $('#file').click();
   $('#file').onchange = (e) => {
     addFiles([...e.target.files]);
@@ -875,7 +1244,9 @@ async function renderNew(fid) {
         tags: $('#g').value.split(',').map((s) => s.trim()).filter(Boolean),
         files,
         code,
+        sub: $('#sf').value,
       });
+      if ($('#sf').value) tg.addLocalSub(fid, $('#sf').value);
       delete S.entries[fid];
       toast('Saved to Telegram');
       location.hash = `#/f/${fid}`;
@@ -925,6 +1296,7 @@ async function renderEdit(fid, entryId) {
 <div><label class="lbl" for="l">Language</label><select class="sel" id="l">${tg.LANGUAGES.map((l) => `<option ${l === entry.lang ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
 <div><label class="lbl" for="g">Tags <span>(optional, separate with commas)</span></label><input class="in" id="g" /></div>
 </div>
+<div class="block"><label class="lbl" for="sf">Subfolder <span>(optional)</span></label><select class="sel" id="sf">${subSelectHtml(fid, S.entries[fid], entry.sub)}</select></div>
 <div class="block"><label class="lbl">Screenshots <span>(tap × to remove, or add more)</span></label>
 <div class="thumbs" id="thumbs"></div>
 <div class="drop" id="drop" style="margin-top:10px"><span class="ui">${I.up}</span>
@@ -990,6 +1362,7 @@ async function renderEdit(fid, entryId) {
     }
     drawThumbs();
   };
+  bindSubSelect($('#sf'));
   $('#browse').onclick = () => $('#file').click();
   $('#file').onchange = (e) => {
     addFiles([...e.target.files]);
@@ -1036,7 +1409,9 @@ async function renderEdit(fid, entryId) {
         code,
         newFiles: files,
         keepShotIds: kept.map((k) => k.m.id),
+        sub: $('#sf').value,
       });
+      if ($('#sf').value) tg.addLocalSub(fid, $('#sf').value);
       delete S.entries[fid];
       toast('Changes saved to Telegram');
       location.hash = `#/f/${fid}/e/${entryId}`;
