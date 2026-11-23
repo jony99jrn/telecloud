@@ -2,9 +2,13 @@
 //
 // Layout inside your own Telegram account:
 //   folder = a private channel whose title starts with "TC · "
-//   entry  = 1 document message (the code file, caption "#cv {json}")
-//          + 1 optional text message ("#cvq <id>" + the question)
-//          + 1 optional photo/album (caption "#cvi <id>", the screenshots)
+//   entry  = 1 document message (the code file, caption "#tc {json}")
+//          + 1 optional text message ("#tcq <id>" + the question)
+//          + 1 optional photo/album (caption "#tci <id>", the screenshots)
+//
+// Everything new is written with the TC tags. Data saved by older versions ("CV · " folders and
+// "#cv", "#cvq", "#cvi", "#cvpin" messages, in any letter case) is still read, and is upgraded to
+// the TC tags the next time that entry is edited or moved.
 
 import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions';
@@ -14,10 +18,45 @@ import * as lock from './lock.js';
 
 const PREFIX = 'TC · ';
 const LEGACY_PREFIX = 'CV · '; // old folders still show until you rename them to TC
+// The localStorage names below still start with "cv_" on purpose: renaming them would sign
+// everybody out of the app.
 const LS = { id: 'cv_api_id', hash: 'cv_api_hash', session: 'cv_session' };
+
+// First tag in each list is the one that gets written, the rest are only read.
+const TAGS = {
+  code: ['#tc ', '#cv '],
+  question: ['#tcq ', '#cvq '],
+  image: ['#tci ', '#cvi '],
+  pin: ['#tcpin ', '#cvpin '],
+};
+
+/** The text after the tag when `text` starts with a tag of that kind (old or new), else null. */
+function afterTag(text, kind) {
+  const t = String(text || '');
+  const head = t.slice(0, 8).toLowerCase();
+  for (const tag of TAGS[kind]) if (head.startsWith(tag)) return t.slice(tag.length);
+  return null;
+}
+
+/** Which folder prefix a channel title has (new, old, or none). Letter case is ignored. */
+function prefixOf(title) {
+  const head = String(title || '').slice(0, PREFIX.length).toUpperCase();
+  if (head === PREFIX.toUpperCase()) return PREFIX;
+  if (head === LEGACY_PREFIX.toUpperCase()) return LEGACY_PREFIX;
+  return null;
+}
+
+const qText = (id, q) => `${TAGS.question[0]}${id}\n${q}`;
+const imgTag = (id) => `${TAGS.image[0]}${id}`;
 
 export const LANGUAGES = ['C', 'C++', 'Java', 'Python', 'JavaScript', 'SQL', 'HTML/CSS', 'Other'];
 const EXT = { C: 'c', 'C++': 'cpp', Java: 'java', Python: 'py', JavaScript: 'js', SQL: 'sql', 'HTML/CSS': 'html', Other: 'txt' };
+
+/** File extension for a language, for example "c" for C. */
+export const extFor = (lang) => EXT[lang] || 'txt';
+
+// Telegram answers "everything" with a limit this big when listing chats.
+const MAX_DIALOGS = 20000;
 
 let client = null;
 let pending = null;
@@ -137,14 +176,15 @@ export function resetLock() {
 
 /* ---------- PIN saved in your Telegram (private channel) ---------- */
 
-// Holds one message "#cvpin {json}" with a salted hash of the PIN, never the PIN.
+// Holds one message "#tcpin {json}" with a salted hash of the PIN, never the PIN. (Older: "#cvpin".)
 // The title must NOT start with "TC · " or "CV · ", or it would show up as a code folder.
 export const PIN_CHANNEL = 'Private PIN for Tele Cloud';
 
 export const verifyRemotePin = lock.verifyRemote;
 
 async function findPinChannel() {
-  for await (const d of client.iterDialogs({ limit: 2000 })) {
+  await ensureConnected();
+  for await (const d of client.iterDialogs({ limit: MAX_DIALOGS })) {
     const e = d.entity;
     // only a channel you own counts, so nobody else can plant a fake one
     if (e && e.className === 'Channel' && e.broadcast && e.creator && e.title === PIN_CHANNEL) return e;
@@ -179,12 +219,12 @@ async function createPinChannel() {
 export async function getRemotePin() {
   const channel = await findPinChannel();
   if (!channel) return { channel: null, msgId: null, rec: null };
-  const msgs = await client.getMessages(channel, { limit: 30 });
+  const msgs = await reliable(() => client.getMessages(channel, { limit: 30 }), { ms: 60000 });
   for (const m of msgs) {
-    const text = m.message || '';
-    if (!text.startsWith('#cvpin ')) continue;
+    const body = afterTag(m.message, 'pin');
+    if (body === null) continue;
     try {
-      const rec = JSON.parse(text.slice(7));
+      const rec = JSON.parse(body);
       if (lock.isVerifier(rec)) return { channel, msgId: m.id, rec };
     } catch (e) {
       /* not a valid record */
@@ -197,9 +237,9 @@ export async function getRemotePin() {
 export async function saveRemotePin(pin, existing) {
   const rec = await lock.makeVerifier(pin);
   const channel = existing?.channel || (await createPinChannel());
-  const text = '#cvpin ' + JSON.stringify(rec);
-  if (existing?.msgId) await safeEdit(channel, { message: existing.msgId, text });
-  else await client.sendMessage(channel, { message: text });
+  const text = TAGS.pin[0] + JSON.stringify(rec);
+  if (existing?.msgId) await reliable(() => safeEdit(channel, { message: existing.msgId, text }));
+  else await reliable(() => client.sendMessage(channel, { message: text }));
 }
 
 async function makeClient(sessionString) {
@@ -208,6 +248,9 @@ async function makeClient(sessionString) {
     connectionRetries: 5,
     useWSS: true,
   });
+  // Never sleep silently on a Telegram flood wait: an error comes back instead, so the screen can
+  // show the wait (reliable() below waits and retries by itself for saves and edits).
+  client.floodSleepThreshold = 0;
   await client.connect();
   return client;
 }
@@ -331,6 +374,168 @@ export async function signOut() {
   client = null;
 }
 
+/* ---------- staying connected (why "Saving…" used to hang) ---------- */
+
+// Telegram's connection (a WebSocket) can die quietly while the app sits idle or in the background.
+// GramJS then waits for an answer that never comes, so the Save button stayed on "Saving…" until a
+// refresh. Every call that talks to Telegram now goes through reliable(): it checks the connection,
+// gives up after a time limit, reconnects, and tries again. Waits that Telegram asks for (flood
+// waits) are counted down on screen instead of looking like a freeze.
+
+const OP_TIMEOUT = 45 * 1000; // a message or an edit
+const UPLOAD_TIMEOUT = 90 * 1000; // a file or an album
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function withTimeout(promise, ms) {
+  let timer;
+  promise.catch(() => {}); // if it fails after the time limit, nobody is left to hear about it
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const e = new Error('Telegram did not answer in time.');
+      e.isTimeout = true;
+      reject(e);
+    }, ms);
+  });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+
+export async function ensureConnected() {
+  if (!client) throw new Error('Not connected to Telegram. Please sign in again.');
+  if (!client.connected) await withTimeout(client.connect(), 20000);
+}
+
+async function reconnect() {
+  try {
+    await withTimeout(client.disconnect(), 8000);
+  } catch (e) {
+    /* it was already closed */
+  }
+  await withTimeout(client.connect(), 20000);
+}
+
+/** Call when the app comes back to the screen or the internet returns: reconnects if the line is dead. */
+export async function warmUp() {
+  if (!client) return;
+  try {
+    await ensureConnected();
+    await withTimeout(client.getMe(), 8000);
+  } catch (e) {
+    if (e?.errorMessage) return; // Telegram answered, so the line is fine
+    try {
+      await reconnect();
+    } catch (e2) {
+      /* still offline: the next save shows the problem */
+    }
+  }
+}
+
+function floodSeconds(e) {
+  const n = Number(e?.seconds);
+  if (n > 0) return n;
+  const m = String(e?.errorMessage || e?.message || '');
+  if (/FLOOD/.test(m)) return Number((m.match(/\d+/) || [])[0]) || 30;
+  return 0;
+}
+
+/**
+ * Runs one Telegram call safely.
+ *   ms          time limit for one try
+ *   alreadyDone optional: after a dropped connection, returns the result if the call had actually
+ *               gone through (so a retry never saves the same thing twice)
+ *   onStatus    optional: shows "Reconnecting…" or the flood-wait countdown on the screen
+ */
+async function reliable(fn, { ms = OP_TIMEOUT, alreadyDone, onStatus } = {}) {
+  let lastErr;
+  let dropped = 0;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      await ensureConnected();
+      return await withTimeout(fn(), ms);
+    } catch (e) {
+      lastErr = e;
+      const wait = floodSeconds(e);
+      if (wait) {
+        if (wait > 120) throw e;
+        for (let s = wait; s > 0; s--) {
+          onStatus?.(`Telegram asks you to wait… ${s}s`);
+          await sleep(1000);
+        }
+        onStatus?.('Saving…');
+        continue;
+      }
+      // Telegram answered with a real error (or a bug): retrying would not help
+      if (e?.errorMessage || e instanceof TypeError || e instanceof RangeError) throw e;
+      if (++dropped >= 3) throw e;
+      onStatus?.('Connection lost. Reconnecting…');
+      try {
+        await reconnect();
+      } catch (e2) {
+        lastErr = e2;
+        continue;
+      }
+      if (alreadyDone) {
+        try {
+          const done = await withTimeout(alreadyDone(), 20000);
+          if (done) return done;
+        } catch (e3) {
+          /* could not check: just try again */
+        }
+      }
+      onStatus?.('Saving…');
+    }
+  }
+  throw lastErr;
+}
+
+const asList = (x) => (Array.isArray(x) ? x : x ? [x] : []);
+const idsOf = (x) => asList(x).map((m) => m.id).filter(Boolean);
+
+// Does this message belong to the entry `id`? kind: 'code', 'question', 'image', or 'any'.
+function belongs(m, id, kind) {
+  const text = m.message || '';
+  if ((kind === 'code' || kind === 'any') && m.document) {
+    const j = afterTag(text, 'code');
+    if (j !== null) {
+      try {
+        if (JSON.parse(j).id === id) return true;
+      } catch (e) {
+        /* not ours */
+      }
+    }
+  }
+  if (kind === 'question' || kind === 'any') {
+    const r = afterTag(text, 'question');
+    if (r !== null && r.split('\n')[0].trim() === id) return true;
+  }
+  if (kind === 'image' || kind === 'any') {
+    const r = afterTag(text, 'image');
+    if (r !== null && r.trim() === id) return true;
+  }
+  return false;
+}
+
+/** Looks at the newest messages of the channel for ones that belong to entry `id` (null when none).
+ *  `exclude` is a Set of message ids that were already there before, so they do not count. */
+async function findRecent(ent, id, kind, exclude = new Set()) {
+  const recent = await client.getMessages(ent, { limit: 20 });
+  const hits = recent.filter((m) => !exclude.has(m.id) && belongs(m, id, kind));
+  const out = new Map(hits.map((m) => [m.id, m]));
+  for (const m of hits) {
+    if (!m.groupedId) continue;
+    for (const x of recent) if (x.groupedId && String(x.groupedId) === String(m.groupedId) && !exclude.has(x.id)) out.set(x.id, x);
+  }
+  return out.size ? [...out.values()] : null;
+}
+
+async function removeMessages(ent, ids) {
+  if (!ids.length) return;
+  try {
+    await reliable(() => client.deleteMessages(ent, ids, { revoke: true }));
+  } catch (e) {
+    console.warn('cleanup failed', e);
+  }
+}
+
 /* ---------- folders ---------- */
 
 async function pool(items, size, fn) {
@@ -348,26 +553,30 @@ async function pool(items, size, fn) {
 }
 
 async function countFor(folder) {
-  const r = await client.getMessages(folder.entity, {
-    limit: 1,
-    filter: new Api.InputMessagesFilterDocument(),
-  });
+  const r = await reliable(
+    () => client.getMessages(folder.entity, { limit: 1, filter: new Api.InputMessagesFilterDocument() }),
+    { ms: 60000 }
+  );
   folder.count = r.total ?? r.length ?? 0;
   folder.last = r[0] ? r[0].date * 1000 : null;
 }
 
 export async function listFolders() {
-  const dialogs = await client.getDialogs({ limit: 300 });
-  const folders = [];
-  for (const d of dialogs) {
-    const e = d.entity;
-    if (!e || e.className !== 'Channel' || !e.broadcast) continue;
-    const title = e.title || '';
-    const pre = title.startsWith(PREFIX) ? PREFIX : title.startsWith(LEGACY_PREFIX) ? LEGACY_PREFIX : null;
-    if (pre) {
-      folders.push({ id: String(e.id), entity: e, name: title.slice(pre.length), count: 0, last: null });
-    }
-  }
+  // Goes through ALL your chats, not just the newest 300, so an old folder never goes missing.
+  const folders = await reliable(
+    async () => {
+      const found = [];
+      for await (const d of client.iterDialogs({ limit: MAX_DIALOGS })) {
+        const e = d.entity;
+        if (!e || e.className !== 'Channel' || !e.broadcast) continue;
+        const title = e.title || '';
+        const pre = prefixOf(title);
+        if (pre) found.push({ id: String(e.id), entity: e, name: title.slice(pre.length), count: 0, last: null });
+      }
+      return found;
+    },
+    { ms: 180 * 1000 }
+  );
   await pool(folders, 4, countFor);
   folders.sort((a, b) => (b.last || 0) - (a.last || 0));
   return folders;
@@ -415,13 +624,13 @@ export async function createFolder(name) {
 }
 
 export async function deleteFolder(folder) {
-  await client.invoke(new Api.channels.DeleteChannel({ channel: folder.entity }));
+  await reliable(() => client.invoke(new Api.channels.DeleteChannel({ channel: folder.entity })));
 }
 
 /* ---------- entries ---------- */
 
 export async function loadEntries(folder) {
-  const msgs = await client.getMessages(folder.entity, { limit: 3000 });
+  const msgs = await reliable(() => client.getMessages(folder.entity, { limit: 3000 }), { ms: 120 * 1000 });
   const entries = new Map();
   const questions = new Map();
   const photos = [];
@@ -429,9 +638,11 @@ export async function loadEntries(folder) {
 
   for (const m of msgs) {
     const text = m.message || '';
-    if (text.startsWith('#cv ') && m.document) {
+    const codeJson = m.document ? afterTag(text, 'code') : null;
+    const qBody = codeJson === null ? afterTag(text, 'question') : null;
+    if (codeJson !== null) {
       try {
-        const meta = JSON.parse(text.slice(4));
+        const meta = JSON.parse(codeJson);
         entries.set(meta.id, {
           id: meta.id,
           title: meta.t || 'Untitled',
@@ -451,15 +662,16 @@ export async function loadEntries(folder) {
       } catch (e) {
         /* not one of ours */
       }
-    } else if (text.startsWith('#cvq ')) {
-      const nl = text.indexOf('\n');
-      const id = text.slice(5, nl === -1 ? undefined : nl).trim();
-      questions.set(id, { text: nl === -1 ? '' : text.slice(nl + 1), msgId: m.id });
+    } else if (qBody !== null) {
+      const nl = qBody.indexOf('\n');
+      const id = qBody.slice(0, nl === -1 ? undefined : nl).trim();
+      questions.set(id, { text: nl === -1 ? '' : qBody.slice(nl + 1), msgId: m.id });
     } else if (m.photo) {
       const gid = m.groupedId ? String(m.groupedId) : null;
       let id = null;
-      if (text.startsWith('#cvi ')) {
-        id = text.slice(5).trim();
+      const imgId = afterTag(text, 'image');
+      if (imgId !== null) {
+        id = imgId.trim();
         if (gid) groups.set(gid, id);
       }
       photos.push({ m, gid, id });
@@ -554,7 +766,7 @@ function metaOf(entry, sub) {
   };
   const d = cleanSub(sub);
   if (d) meta.d = d;
-  return '#cv ' + JSON.stringify(meta);
+  return TAGS.code[0] + JSON.stringify(meta);
 }
 
 /**
@@ -566,7 +778,7 @@ export async function moveEntries(folder, entries, sub, onProgress) {
   let done = 0;
   for (const entry of entries) {
     if (entry.sub !== target) {
-      await safeEdit(folder.entity, { message: entry.codeMsg.id, text: metaOf(entry, target) });
+      await reliable(() => safeEdit(folder.entity, { message: entry.codeMsg.id, text: metaOf(entry, target) }));
       entry.sub = target;
     }
     done++;
@@ -599,8 +811,33 @@ async function shrinkImage(file, maxSide = 1600) {
   return Buffer.from(await blob.arrayBuffer());
 }
 
-export async function addEntry(folder, { title, question, lang, tags, files, code, sub }) {
+/** Turns the picked image files into ready-to-send JPEG buffers. Done before anything is sent,
+ *  so a bad image can never leave a half-saved entry behind. */
+async function prepareShots(files, stamp = '') {
+  const out = [];
+  for (let i = 0; i < files.length; i++) {
+    const buf = await shrinkImage(files[i]);
+    out.push({ name: `shot-${stamp}${i + 1}.jpg`, buf });
+  }
+  return out;
+}
+
+const sendShots = (ent, shots, caption, opts) =>
+  reliable(
+    () => {
+      const cfs = shots.map((s) => new CustomFile(s.name, s.buf.length, '', s.buf));
+      return client.sendFile(ent, { file: cfs.length === 1 ? cfs[0] : cfs, caption });
+    },
+    { ms: UPLOAD_TIMEOUT, ...opts }
+  );
+
+/**
+ * Saves a new entry. If any step fails, whatever was already sent for this entry is removed again,
+ * so you never end up with half an entry. onStatus(text) is optional (shows waits on the button).
+ */
+export async function addEntry(folder, { title, question, lang, tags, files, code, sub, onStatus }) {
   const id = rid();
+  const ent = folder.entity;
   const meta = {
     id,
     t: title.slice(0, 120),
@@ -613,41 +850,54 @@ export async function addEntry(folder, { title, question, lang, tags, files, cod
   if (cleanSub(sub)) meta.d = cleanSub(sub);
   const buf = Buffer.from(code, 'utf8');
   const name = `${slug(title)}.${EXT[lang] || 'txt'}`;
-  await client.sendFile(folder.entity, {
-    file: new CustomFile(name, buf.length, '', buf),
-    caption: '#cv ' + JSON.stringify(meta),
-    forceDocument: true,
-  });
-  if (question.trim()) {
-    await client.sendMessage(folder.entity, { message: `#cvq ${id}\n${question.trim().slice(0, 3900)}` });
-  }
-  if (files.length) {
-    const cfs = [];
-    for (let i = 0; i < files.length; i++) {
-      const b = await shrinkImage(files[i]);
-      cfs.push(new CustomFile(`shot-${i + 1}.jpg`, b.length, '', b));
+  const shots = await prepareShots(files);
+
+  try {
+    await reliable(
+      () =>
+        client.sendFile(ent, {
+          file: new CustomFile(name, buf.length, '', buf),
+          caption: TAGS.code[0] + JSON.stringify(meta),
+          forceDocument: true,
+        }),
+      { ms: UPLOAD_TIMEOUT, onStatus, alreadyDone: () => findRecent(ent, id, 'code') }
+    );
+    if (question.trim()) {
+      await reliable(() => client.sendMessage(ent, { message: qText(id, question.trim().slice(0, 3900)) }), {
+        onStatus,
+        alreadyDone: () => findRecent(ent, id, 'question'),
+      });
     }
-    await client.sendFile(folder.entity, {
-      file: cfs.length === 1 ? cfs[0] : cfs,
-      caption: `#cvi ${id}`,
-    });
+    if (shots.length) {
+      await sendShots(ent, shots, imgTag(id), { onStatus, alreadyDone: () => findRecent(ent, id, 'image') });
+    }
+  } catch (e) {
+    // take back everything of this entry that did reach Telegram
+    try {
+      await ensureConnected();
+      const sent = await withTimeout(findRecent(ent, id, 'any'), 20000);
+      if (sent) await removeMessages(ent, idsOf(sent));
+    } catch (e2) {
+      console.warn('could not check for leftovers', e2);
+    }
+    throw e;
   }
   return id;
 }
 
 export async function deleteEntry(folder, entry) {
-  await client.deleteMessages(folder.entity, entry.msgIds, { revoke: true });
+  await reliable(() => client.deleteMessages(folder.entity, entry.msgIds, { revoke: true }));
 }
 
 export async function getCode(entry) {
   if (entry.code !== null) return entry.code;
-  const buf = await client.downloadMedia(entry.codeMsg, {});
+  const buf = await reliable(() => client.downloadMedia(entry.codeMsg, {}), { ms: 60000 });
   entry.code = new TextDecoder().decode(buf);
   return entry.code;
 }
 
 export async function getShotUrl(msg) {
-  const buf = await client.downloadMedia(msg, {});
+  const buf = await reliable(() => client.downloadMedia(msg, {}), { ms: 60000 });
   return URL.createObjectURL(new Blob([buf], { type: 'image/jpeg' }));
 }
 
@@ -662,52 +912,29 @@ async function safeEdit(entity, params) {
   }
 }
 
-export async function editEntry(folder, entry, { title, question, lang, tags, code, newFiles, keepShotIds, sub }) {
+/**
+ * Saves changes to an entry in a safe order, because Telegram has no "all or nothing" save:
+ *   1. add the new question / screenshots (nothing existing is touched yet)
+ *   2. change the question text and the code message (each change can be undone)
+ *   3. only then delete what you removed
+ * If step 1 or 2 fails, everything done so far is undone and the entry stays exactly as it was.
+ * If only step 3 fails, your changes are saved and the error says so (err.partial = true).
+ */
+export async function editEntry(folder, entry, { title, question, lang, tags, code, newFiles, keepShotIds, sub, onStatus }) {
   const id = entry.id;
   const ent = folder.entity;
   const oldCode = await getCode(entry);
 
-  // question
   const q = question.trim().slice(0, 3900);
-  if (entry.qMsgId && !q) {
-    await client.deleteMessages(ent, [entry.qMsgId], { revoke: true });
-  } else if (entry.qMsgId && q !== entry.question.trim()) {
-    await safeEdit(ent, { message: entry.qMsgId, text: `#cvq ${id}\n${q}` });
-  } else if (!entry.qMsgId && q) {
-    await client.sendMessage(ent, { message: `#cvq ${id}\n${q}` });
-  }
-
-  // screenshots: remove the ones you deleted, keep the rest
   const keep = new Set(keepShotIds);
   const removed = entry.shots.filter((m) => !keep.has(m.id));
   const kept = entry.shots.filter((m) => keep.has(m.id));
-  if (removed.length) await client.deleteMessages(ent, removed.map((m) => m.id), { revoke: true });
+  const before = new Set(entry.msgIds); // messages that already exist, so a retry never mistakes them for new ones
 
-  // every remaining album must still carry the #cvi caption
-  const tag = `#cvi ${id}`;
-  const groups = new Map();
-  for (const m of kept) {
-    const k = m.groupedId ? String(m.groupedId) : 's' + m.id;
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(m);
-  }
-  for (const list of groups.values()) {
-    if (!list.some((m) => (m.message || '') === tag)) {
-      await safeEdit(ent, { message: list[0].id, text: tag });
-    }
-  }
-
-  // new screenshots
-  if (newFiles.length) {
-    const cfs = [];
-    for (let i = 0; i < newFiles.length; i++) {
-      const b = await shrinkImage(newFiles[i]);
-      cfs.push(new CustomFile(`shot-${Date.now()}-${i + 1}.jpg`, b.length, '', b));
-    }
-    await client.sendFile(ent, { file: cfs.length === 1 ? cfs[0] : cfs, caption: tag });
-  }
-
-  // code message: caption (title, language, tags) and the file itself
+  // everything that can fail on this device happens first
+  const shots = await prepareShots(newFiles, `${Date.now()}-`);
+  const buf = Buffer.from(code, 'utf8');
+  const name = `${slug(title)}.${EXT[lang] || 'txt'}`;
   const meta = {
     id,
     t: title.slice(0, 120),
@@ -715,22 +942,81 @@ export async function editEntry(folder, entry, { title, question, lang, tags, co
     g: tags.slice(0, 8).map((t) => t.slice(0, 24)),
     ts: entry.ts,
     n: code.split('\n').length,
-    s: kept.length + newFiles.length,
+    s: kept.length + shots.length,
   };
   const newSub = cleanSub(sub === undefined ? entry.sub : sub);
   if (newSub) meta.d = newSub;
-  const caption = '#cv ' + JSON.stringify(meta);
-  if (code !== oldCode || title !== entry.title || lang !== entry.lang) {
-    const buf = Buffer.from(code, 'utf8');
-    const name = `${slug(title)}.${EXT[lang] || 'txt'}`;
-    await safeEdit(ent, {
-      message: entry.codeMsg.id,
-      text: caption,
-      file: new CustomFile(name, buf.length, '', buf),
-      forceDocument: true,
-    });
-  } else {
-    await safeEdit(ent, { message: entry.codeMsg.id, text: caption });
+  const caption = TAGS.code[0] + JSON.stringify(meta);
+  const fileChanged = code !== oldCode || title !== entry.title || lang !== entry.lang;
+
+  const created = []; // new messages: deleted again if something fails
+  const undo = []; // steps that put a changed message back
+  const edit = (params) => reliable(() => safeEdit(ent, params), { ms: UPLOAD_TIMEOUT, onStatus });
+
+  try {
+    // 1. add
+    if (!entry.qMsgId && q) {
+      const r = await reliable(() => client.sendMessage(ent, { message: qText(id, q) }), {
+        onStatus,
+        alreadyDone: () => findRecent(ent, id, 'question', before),
+      });
+      created.push(...idsOf(r));
+    }
+    if (shots.length) {
+      const r = await sendShots(ent, shots, imgTag(id), { onStatus, alreadyDone: () => findRecent(ent, id, 'image', before) });
+      created.push(...idsOf(r));
+    }
+
+    // 2. change (each with its undo)
+    if (entry.qMsgId && q && q !== entry.question.trim()) {
+      await edit({ message: entry.qMsgId, text: qText(id, q) });
+      undo.push(() => edit({ message: entry.qMsgId, text: qText(id, entry.question) }));
+    }
+    // every remaining album must still carry the #tci caption (old #cvi captions are fine too)
+    const groups = new Map();
+    for (const m of kept) {
+      const k = m.groupedId ? String(m.groupedId) : 's' + m.id;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(m);
+    }
+    for (const list of groups.values()) {
+      if (!list.some((m) => (afterTag(m.message, 'image') || '').trim() === id)) {
+        await edit({ message: list[0].id, text: imgTag(id) });
+      }
+    }
+    const oldCaption = entry.codeMsg.message || '';
+    if (fileChanged) {
+      await edit({ message: entry.codeMsg.id, text: caption, file: new CustomFile(name, buf.length, '', buf), forceDocument: true });
+      const oldBuf = Buffer.from(oldCode, 'utf8');
+      const oldName = `${slug(entry.title)}.${EXT[entry.lang] || 'txt'}`;
+      undo.push(() =>
+        edit({ message: entry.codeMsg.id, text: oldCaption, file: new CustomFile(oldName, oldBuf.length, '', oldBuf), forceDocument: true })
+      );
+    } else {
+      await edit({ message: entry.codeMsg.id, text: caption });
+      undo.push(() => edit({ message: entry.codeMsg.id, text: oldCaption }));
+    }
+  } catch (e) {
+    onStatus?.('Something went wrong. Undoing…');
+    for (const u of undo.reverse()) {
+      try {
+        await u();
+      } catch (e2) {
+        console.warn('undo failed', e2);
+      }
+    }
+    await removeMessages(ent, created);
+    throw e;
+  }
+
+  // 3. delete (last, because it cannot be undone)
+  try {
+    if (entry.qMsgId && !q) await reliable(() => client.deleteMessages(ent, [entry.qMsgId], { revoke: true }), { onStatus });
+    if (removed.length) await reliable(() => client.deleteMessages(ent, removed.map((m) => m.id), { revoke: true }), { onStatus });
+  } catch (e) {
+    const err = new Error('Your changes were saved, but some old items could not be removed. Open the entry and press Save again.');
+    err.partial = true;
+    throw err;
   }
 }
 
@@ -751,6 +1037,8 @@ export function friendlyError(e) {
     CHAT_TITLE_EMPTY: 'Please type a folder name.',
     CHAT_ABOUT_TOO_LONG: 'The channel description is too long.',
   };
+  if (e?.isTimeout) return 'Telegram is not answering. Check your internet connection and try again.';
+  if (/Not connected|disconnected|CONNECTION/i.test(m)) return 'The connection to Telegram dropped. Check your internet and try again.';
   if (/^FLOOD/.test(m) || /FLOOD_WAIT/.test(m)) {
     const secs = (m.match(/\d+/) || [''])[0];
     return `Telegram asks you to wait${secs ? ' ' + secs + ' seconds' : ''} before trying again.`;

@@ -49,11 +49,13 @@
 *   **📂 Folders per Subject**: Create one folder for each course, such as "C Programming" or "Data Structures". Open a folder to see all of its entries, newest first.
 *   **📝 Rich Entries**: Save the code file together with a title, language, tags, the original question text and screenshots. The date and time are added automatically.
 *   **🔍 Search Everything**: Search folder names, and also entry titles, questions, tags and the code itself, across all your folders.
+*   **⬇️ Download as Files**: Download one entry, or tick several entries and download them all. Each file is named after the entry title with the right extension, for example `Prime check.c` for a C entry, and the question (if any) is added at the top as a comment.
 *   **🎨 Code Viewer**: Full-screen viewer with line numbers and syntax colours for C, C++, Java, Python, JavaScript, SQL and HTML/CSS.
 *   **📱 Works on Android and Desktop**: Responsive layout for phones, tablets and computers, with a bottom-sheet style dialog on small screens.
 *   **📲 Installable (PWA)**: Add it to your home screen or desktop from the browser menu and open it like a normal app.
 *   **🤖 Android APK**: A downloadable APK that opens Telecloud in its own app window. It updates itself whenever the website is updated.
 *   **⚡ Offline-Friendly Shell**: A service worker keeps the app screen available when you have no connection. Loading your folders still needs the internet.
+*   **🛡️ Safe Saving**: If the connection to Telegram drops, Telecloud reconnects and retries by itself. An entry is never saved half-way: if a step fails, what was already sent is removed again.
 *   **🔒 Private by Design**: Your API keys and login session stay in your own browser. The app talks directly to Telegram.
 
 ---
@@ -78,11 +80,14 @@
 | Concept | What it is in Telegram |
 | :--- | :--- |
 | **Folder** | A private channel whose title starts with `TC · ` |
-| **Entry (code)** | A document message holding the code file, with a `#cv` caption that stores the title, language, tags and time |
-| **Entry (question)** | An optional text message tagged `#cvq` with the question |
-| **Entry (screenshots)** | An optional photo or album tagged `#cvi` |
+| **Entry (code)** | A document message holding the code file, with a `#tc` caption that stores the title, language, tags and time |
+| **Entry (question)** | An optional text message tagged `#tcq` with the question |
+| **Entry (screenshots)** | An optional photo or album tagged `#tci` |
 
-When you open the site, Telecloud reads your channels that start with `TC · ` and rebuilds your folders and entries from the messages inside them.
+When you open the site, Telecloud reads all of your channels that start with `TC · ` and rebuilds your folders and entries from the messages inside them.
+
+> [!NOTE]
+> Older versions used `CV · ` folders and the tags `#cv`, `#cvq`, `#cvi` and `#cvpin`. Telecloud still reads all of them, and new data is always saved with the `TC` names.
 
 ---
 
