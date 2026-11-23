@@ -60,8 +60,6 @@
 
 ## 📷 Screenshots
 
-> Add your own screenshots to a `screenshots/` folder (PNG), or delete this section.
-
 <p align="center">
   <img src="screenshots/login.png" width="250" alt="Login">
   <img src="screenshots/folders.png" width="250" alt="Folders">
