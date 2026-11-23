@@ -25,6 +25,7 @@ const I = {
   up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6M5 20h14"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/></svg>',
+  github: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.69 1.25 3.35.95.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.24 2.76.12 3.05.74.81 1.18 1.83 1.18 3.09 0 4.42-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>',
   android: '<svg viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M7 8a5 5 0 0 1 10 0zM9.6 6.2a.6.6 0 1 0 1.2 0 .6.6 0 1 0-1.2 0zM13.2 6.2a.6.6 0 1 0 1.2 0 .6.6 0 1 0-1.2 0z"/><path d="M7 9h10v8a1.5 1.5 0 0 1-1.5 1.5H15V21a1.2 1.2 0 0 1-2.4 0v-2.5h-1.2V21a1.2 1.2 0 0 1-2.4 0v-2.5h-.5A1.5 1.5 0 0 1 7 17zM5 9.5a1.1 1.1 0 0 1 2.2 0v5a1.1 1.1 0 0 1-2.2 0zM16.8 9.5a1.1 1.1 0 0 1 2.2 0v5a1.1 1.1 0 0 1-2.2 0z"/><path d="M9 2.6l1.1 1.5M15 2.6l-1.1 1.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 015.5 5H9l2 2.5h7.5A2.5 2.5 0 0121 10v7.5a2.5 2.5 0 01-2.5 2.5h-13A2.5 2.5 0 013 17.5z"/></svg>',
@@ -59,6 +60,8 @@ function fmtDate(ts) {
 }
 
 const fmtDay = (ts) => new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+const REPO_URL = 'https://github.com/jony99jrn/telecloud';
+
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const BADGE = { C: 'C', 'C++': 'C++', Java: 'Java', Python: 'Py', JavaScript: 'JS', SQL: 'SQL', 'HTML/CSS': 'HTML', Other: 'Txt' };
 
@@ -99,6 +102,74 @@ async function copyText(src) {
   ta.remove();
   return ok;
 }
+
+
+/* ---------- download code files ---------- */
+
+// A file name made from the entry title: characters that Windows or Android do not allow are removed.
+function safeFileName(s) {
+  const clean = String(s || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+    .slice(0, 100)
+    .trim();
+  return clean || 'code';
+}
+
+// The question of an entry, written as a comment in the language of the code, so the file still
+// compiles or runs. Returns "" when the entry has no question.
+function questionComment(question, lang) {
+  const q = String(question || '').replace(/\r\n/g, '\n').trim();
+  if (!q) return '';
+  const lines = q.split('\n');
+  if (lang === 'Python') return ['# Question:', ...lines.map((l) => ('# ' + l).trimEnd())].join('\n') + '\n\n';
+  if (lang === 'SQL') return ['-- Question:', ...lines.map((l) => ('-- ' + l).trimEnd())].join('\n') + '\n\n';
+  if (lang === 'HTML/CSS') return `<!--\nQuestion:\n${q.replace(/-->/g, '-- >')}\n-->\n\n`;
+  if (lang === 'Other') return `Question:\n${q}\n\n`;
+  // C, C++, Java, JavaScript: a block comment ("*/" inside the question is split so it cannot end the comment early)
+  return `/*\n * Question:\n${lines.map((l) => (' * ' + l.replace(/\*\//g, '* /')).trimEnd()).join('\n')}\n */\n\n`;
+}
+
+function saveTextFile(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
+}
+
+/** Downloads each entry as its own file, named after its title with the language's extension
+ *  (a C entry "Prime check" becomes "Prime check.c"). The question, if there is one, is put at the
+ *  top as a comment. Returns how many worked. */
+async function downloadEntries(list) {
+  const used = new Map();
+  let ok = 0;
+  for (const e of list) {
+    try {
+      const code = await tg.getCode(e);
+      const base = safeFileName(e.title);
+      const ext = tg.extFor(e.lang);
+      let name = `${base}.${ext}`;
+      const n = (used.get(name.toLowerCase()) || 0) + 1;
+      used.set(name.toLowerCase(), n);
+      if (n > 1) name = `${base} (${n}).${ext}`; // two entries with the same title
+      saveTextFile(name, questionComment(e.question, e.lang) + code);
+      ok++;
+      if (list.length > 1) await new Promise((r) => setTimeout(r, 400)); // browsers drop downloads fired at the same instant
+    } catch (err) {
+      /* counted as not downloaded */
+    }
+  }
+  return ok;
+}
+
+const downloadToast = (ok, total) =>
+  toast(ok === total ? (total === 1 ? 'Downloaded' : `Downloaded ${total} files`) : ok ? `Downloaded ${ok} of ${total} files` : 'Could not download. Check your connection.');
 
 function modal({ title, text, input, confirm = 'OK', placeholder = '', noCancel = false }) {
   return new Promise((resolve) => {
@@ -240,6 +311,7 @@ ${row(I.at, 'Username', p.username ? '@' + p.username : '', p.username ? '@' + p
 ${row(I.hash, 'Telegram ID', p.id, p.id)}
 ${row(I.shield, 'Security', 'PIN locked. API keys stay on this device.')}
 </div>
+<a class="btn btn-light btn-full pf-src" href="${REPO_URL}" target="_blank" rel="noopener noreferrer">${I.github}View source code on GitHub</a>
 <button class="btn btn-full pf-out" data-signout>${I.out}Sign out</button>
 <p class="pf-note">Signing out ends the Telegram session for this app. Your folders and code stay safe in Telegram.</p>
 </div>`;
@@ -654,6 +726,7 @@ async function renderFolder(fid, entryId) {
 <div class="footer-actions"><button class="link-btn danger" id="delfolder">Delete this folder</button></div></div>
 <div class="selbar" id="selbar" hidden><span id="selcount">0 selected</span>
 <div class="btns"><button class="btn btn-light btn-small" id="selall">Select all</button>
+<button class="btn btn-small" id="seldl">${I.download}Download</button>
 <button class="btn btn-small" id="selmove">${I.folder}Move</button>
 <button class="btn btn-light btn-small" id="selcancel">Cancel</button></div></div>`;
   bindShared(app);
@@ -716,6 +789,7 @@ async function renderFolder(fid, entryId) {
     $('#selbar').hidden = !selecting;
     $('#selcount').textContent = `${picked.size} selected`;
     $('#selmove').disabled = !picked.size;
+    $('#seldl').disabled = !picked.size;
     $('#selall').textContent = picked.size && picked.size === visible.length ? 'Clear' : 'Select all';
     $('#selbtn').innerHTML = selecting ? `${I.x}Done` : `${I.check}Select`;
     $('#out').classList.toggle('pad-sel', selecting);
@@ -940,6 +1014,7 @@ ${
             { label: 'Open', icon: I.ext, fn: () => (location.hash = `#/f/${fid}/e/${e.id}`) },
             { label: 'Edit', icon: I.edit, fn: () => (location.hash = `#/f/${fid}/edit/${e.id}`) },
             { label: 'Copy code', icon: I.copy, fn: () => copyEntry(e) },
+            { label: 'Download', icon: I.download, fn: async () => downloadToast(await downloadEntries([e]), 1) },
             { label: 'Move to subfolder', icon: I.folder, fn: () => moveFlow([e]) },
             {
               label: 'Select',
@@ -973,6 +1048,16 @@ ${
     draw();
   };
   $('#selmove').onclick = () => moveFlow(entries.filter((e) => picked.has(e.id)));
+  $('#seldl').onclick = async () => {
+    const list = entries.filter((e) => picked.has(e.id));
+    if (!list.length) return;
+    const btn = $('#seldl');
+    btn.disabled = true;
+    toast(list.length === 1 ? 'Preparing download…' : `Preparing ${list.length} files…`, 0);
+    const ok = await downloadEntries(list);
+    downloadToast(ok, list.length);
+    btn.disabled = !picked.size;
+  };
   $('#newsub').onclick = async () => {
     const name = tg.cleanSub(
       await modal({ title: 'New subfolder', text: 'It appears in this folder once something is saved in it.', input: true, placeholder: 'e.g. Lab 3', confirm: 'Create' })
@@ -1004,6 +1089,7 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
 <button class="vbtn sq" data-minus aria-label="Smaller text">A−</button>
 <button class="vbtn sq" data-plus aria-label="Bigger text">A+</button>
 <button class="vbtn primary grow" data-copyall>${I.copy}<span>Copy </span></button>
+<button class="vbtn sq" data-dl aria-label="Download code file">${I.download}</button>
 <button class="vbtn sq" data-edit aria-label="Edit entry">${I.edit}</button>
 <button class="vbtn sq" data-del aria-label="Delete entry">${I.trash}</button>
 <button class="vbtn sq" data-close aria-label="Close">${I.x}</button></div></div>
@@ -1029,6 +1115,7 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
   };
 
   $('[data-edit]', v).onclick = () => (location.hash = `#/f/${folder.id}/edit/${entry.id}`);
+  $('[data-dl]', v).onclick = async () => downloadToast(await downloadEntries([entry]), 1);
 
   $('[data-del]', v).onclick = async () => {
     const ok = await modal({ title: 'Delete this entry?', text: 'It will also be removed from your Telegram channel.', confirm: 'Delete' });
@@ -1131,8 +1218,14 @@ async function renderNew(fid) {
   }
   const files = [];
   if (!S.entries[fid]) {
+    // The form must open even when Telegram is slow: wait at most 8 seconds for the subfolder list.
     try {
-      S.entries[fid] = await tg.loadEntries(folder);
+      await Promise.race([
+        tg.loadEntries(folder).then((list) => {
+          S.entries[fid] = list;
+        }),
+        new Promise((r) => setTimeout(r, 8000)),
+      ]);
     } catch (e) {
       /* the subfolder list will just be empty */
     }
@@ -1245,6 +1338,7 @@ async function renderNew(fid) {
         files,
         code,
         sub: $('#sf').value,
+        onStatus: (t) => (btn.textContent = t),
       });
       if ($('#sf').value) tg.addLocalSub(fid, $('#sf').value);
       delete S.entries[fid];
@@ -1410,12 +1504,20 @@ async function renderEdit(fid, entryId) {
         newFiles: files,
         keepShotIds: kept.map((k) => k.m.id),
         sub: $('#sf').value,
+        onStatus: (t) => (btn.textContent = t),
       });
       if ($('#sf').value) tg.addLocalSub(fid, $('#sf').value);
       delete S.entries[fid];
       toast('Changes saved to Telegram');
       location.hash = `#/f/${fid}/e/${entryId}`;
     } catch (err) {
+      if (err.partial) {
+        // the changes are saved, only some old items were not removed: reload and show the entry
+        delete S.entries[fid];
+        toast(err.message, 6000);
+        location.hash = `#/f/${fid}/e/${entryId}`;
+        return;
+      }
       btn.disabled = false;
       btn.innerHTML = `${I.check}Save changes`;
       toast(tg.friendlyError(err));
@@ -1658,6 +1760,15 @@ function route() {
 }
 
 window.addEventListener('hashchange', route);
+
+// Telegram's connection can die while the app is in the background or the internet drops.
+// Checking it as soon as the app is back means the next Save does not get stuck.
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) hiddenAt = Date.now();
+  else if (S.authed && Date.now() - hiddenAt > 20000) tg.warmUp();
+});
+window.addEventListener('online', () => S.authed && tg.warmUp());
 
 (async function start() {
   if (tg.hasSession()) {
