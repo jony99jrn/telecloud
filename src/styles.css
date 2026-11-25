@@ -29,8 +29,8 @@ svg { display: block; }
 
 /* ---------- shell ---------- */
 .shell {
-  max-width: 1240px; margin: 0 auto;
-  padding: calc(28px + env(safe-area-inset-top)) calc(28px + env(safe-area-inset-right)) calc(80px + env(safe-area-inset-bottom)) calc(28px + env(safe-area-inset-left));
+  max-width: none; width: 100%; margin: 0 auto;
+  padding: calc(28px + env(safe-area-inset-top)) calc(clamp(28px, 4vw, 72px) + env(safe-area-inset-right)) calc(80px + env(safe-area-inset-bottom)) calc(clamp(28px, 4vw, 72px) + env(safe-area-inset-left));
 }
 .narrow { max-width: 780px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
