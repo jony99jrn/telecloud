@@ -15,6 +15,7 @@ import { StringSession } from 'telegram/sessions';
 import { CustomFile } from 'telegram/client/uploads';
 import { Buffer } from 'buffer';
 import * as lock from './lock.js';
+import { splitSolutions } from './solutions.js';
 
 const PREFIX = 'TC · ';
 const LEGACY_PREFIX = 'CV · '; // old folders still show until you rename them to TC
@@ -652,6 +653,7 @@ export async function loadEntries(folder) {
           ts: meta.ts || m.date * 1000,
           lines: meta.n || 0,
           shotCount: meta.s || 0,
+          solutions: meta.c || 1,
           codeMsg: m,
           msgIds: [m.id],
           question: '',
@@ -764,6 +766,7 @@ function metaOf(entry, sub) {
     n: entry.lines,
     s: entry.shotCount,
   };
+  if (entry.solutions > 1) meta.c = entry.solutions;
   const d = cleanSub(sub);
   if (d) meta.d = d;
   return TAGS.code[0] + JSON.stringify(meta);
@@ -847,6 +850,7 @@ export async function addEntry(folder, { title, question, lang, tags, files, cod
     n: code.split('\n').length,
     s: files.length,
   };
+  if (splitSolutions(code).length > 1) meta.c = splitSolutions(code).length;
   if (cleanSub(sub)) meta.d = cleanSub(sub);
   const buf = Buffer.from(code, 'utf8');
   const name = `${slug(title)}.${EXT[lang] || 'txt'}`;
@@ -944,6 +948,7 @@ export async function editEntry(folder, entry, { title, question, lang, tags, co
     n: code.split('\n').length,
     s: kept.length + shots.length,
   };
+  if (splitSolutions(code).length > 1) meta.c = splitSolutions(code).length;
   const newSub = cleanSub(sub === undefined ? entry.sub : sub);
   if (newSub) meta.d = newSub;
   const caption = TAGS.code[0] + JSON.stringify(meta);
