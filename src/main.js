@@ -1231,7 +1231,7 @@ async function renderNew(fid) {
     }
   }
 
-  app.innerHTML = `<div class="shell narrow">${header()}
+  app.innerHTML = `<div class="shell">${header()}
 <a class="back" href="#/f/${fid}">${I.back}${esc(folder.name)}</a>
 <h1 class="title" style="margin-top:0">New entry</h1>
 <p class="sub">It will be saved in your ${esc(folder.name)} channel. The date and time are added for you.</p>
@@ -1361,7 +1361,7 @@ async function renderEdit(fid, entryId) {
     location.hash = '#/';
     return;
   }
-  app.innerHTML = `<div class="shell narrow">${header()}<div class="loading">Loading entry…</div></div>`;
+  app.innerHTML = `<div class="shell">${header()}<div class="loading">Loading entry…</div></div>`;
 
   let entry, oldCode;
   try {
@@ -1379,7 +1379,7 @@ async function renderEdit(fid, entryId) {
   const files = []; // new screenshots
   const kept = entry.shots.map((m) => ({ m, url: '' })); // existing screenshots
 
-  app.innerHTML = `<div class="shell narrow">${header()}
+  app.innerHTML = `<div class="shell">${header()}
 <a class="back" href="#/f/${fid}/e/${entryId}">${I.back}Back to entry</a>
 <h1 class="title" style="margin-top:0">Edit entry</h1>
 <p class="sub">Changes are saved to the same message in your ${esc(folder.name)} channel.</p>
