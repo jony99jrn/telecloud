@@ -1,6 +1,7 @@
 import './styles.css';
 import * as tg from './telegram.js';
 import { highlightLines } from './highlight.js';
+import { splitSolutions, joinSolutions } from './solutions.js';
 
 /* ---------- tiny helpers ---------- */
 
@@ -151,16 +152,18 @@ async function downloadEntries(list) {
   let ok = 0;
   for (const e of list) {
     try {
-      const code = await tg.getCode(e);
-      const base = safeFileName(e.title);
-      const ext = tg.extFor(e.lang);
-      let name = `${base}.${ext}`;
-      const n = (used.get(name.toLowerCase()) || 0) + 1;
-      used.set(name.toLowerCase(), n);
-      if (n > 1) name = `${base} (${n}).${ext}`; // two entries with the same title
-      saveTextFile(name, questionComment(e.question, e.lang) + code);
+      const parts = splitSolutions(await tg.getCode(e));
+      for (let k = 0; k < parts.length; k++) {
+        const base = safeFileName(e.title) + (k ? ` (solution ${k + 1})` : '');
+        const ext = tg.extFor(e.lang);
+        let name = `${base}.${ext}`;
+        const n = (used.get(name.toLowerCase()) || 0) + 1;
+        used.set(name.toLowerCase(), n);
+        if (n > 1) name = `${base} (${n}).${ext}`; // two entries with the same title
+        saveTextFile(name, questionComment(e.question, e.lang) + parts[k]);
+        if (list.length > 1 || parts.length > 1) await new Promise((r) => setTimeout(r, 400)); // browsers drop downloads fired at the same instant
+      }
       ok++;
-      if (list.length > 1) await new Promise((r) => setTimeout(r, 400)); // browsers drop downloads fired at the same instant
     } catch (err) {
       /* counted as not downloaded */
     }
@@ -778,7 +781,7 @@ async function renderFolder(fid, entryId) {
 
   const copyEntry = async (e) => {
     try {
-      const ok = await copyText(tg.getCode(e));
+      const ok = await copyText(tg.getCode(e).then((c) => splitSolutions(c)[0]));
       toast(ok ? 'Code copied' : 'Could not copy. Open the entry and select the code.');
     } catch (err) {
       toast('Could not read this code. ' + tg.friendlyError(err));
@@ -897,14 +900,14 @@ async function renderFolder(fid, entryId) {
 <div class="row"><span class="badge">${esc(BADGE[e.lang] || 'Txt')}</span><span class="date">${fmtDate(e.ts)}</span>
 ${selecting ? `<span class="chk" aria-hidden="true">${I.check}</span>` : `<button type="button" class="dots" data-dots="${e.id}" aria-label="More options">${I.dots}</button>`}</div>
 <h3>${esc(e.title)}</h3>
-<div class="meta">${plural(e.lines, 'line')}${e.shotCount ? ' · ' + plural(e.shotCount, 'screenshot') : ''}${showSub && e.sub ? ` · <span class="subchip">${I.folder}${esc(e.sub)}</span>` : ''}</div>
+<div class="meta">${plural(e.lines, 'line')}${e.shotCount ? ' · ' + plural(e.shotCount, 'screenshot') : ''}${e.solutions > 1 ? ' · ' + plural(e.solutions, 'solution') : ''}${showSub && e.sub ? ` · <span class="subchip">${I.folder}${esc(e.sub)}</span>` : ''}</div>
 ${e.tags.length ? `<div class="tags">${e.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
 ${
   selecting
     ? ''
     : `<div class="actions"><a class="btn btn-light btn-small" href="#/f/${fid}/e/${e.id}">Open</a>
 <a class="btn btn-light btn-small" href="#/f/${fid}/edit/${e.id}">${I.edit}Edit</a>
-<button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy </button></div>`
+${e.solutions > 1 ? '' : `<button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy </button>`}</div>`
 }</div>`;
 
   function draw() {
@@ -1013,7 +1016,7 @@ ${
           openMenu(ev.currentTarget, [
             { label: 'Open', icon: I.ext, fn: () => (location.hash = `#/f/${fid}/e/${e.id}`) },
             { label: 'Edit', icon: I.edit, fn: () => (location.hash = `#/f/${fid}/edit/${e.id}`) },
-            { label: 'Copy code', icon: I.copy, fn: () => copyEntry(e) },
+            ...(e.solutions > 1 ? [] : [{ label: 'Copy code', icon: I.copy, fn: () => copyEntry(e) }]),
             { label: 'Download', icon: I.download, fn: async () => downloadToast(await downloadEntries([e]), 1) },
             { label: 'Move to subfolder', icon: I.folder, fn: () => moveFlow([e]) },
             {
@@ -1093,6 +1096,7 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
 <button class="vbtn sq" data-edit aria-label="Edit entry">${I.edit}</button>
 <button class="vbtn sq" data-del aria-label="Delete entry">${I.trash}</button>
 <button class="vbtn sq" data-close aria-label="Close">${I.x}</button></div></div>
+<div class="v-sols" id="vsols" hidden></div>
 <div class="v-body"><div class="v-code" id="vcode"><div class="loading" style="color:#a8bbd0">Loading code…</div></div>
 <aside class="v-side" id="vside" hidden></aside></div>`;
   document.body.appendChild(v);
@@ -1154,9 +1158,11 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
     if (entry.question && window.innerWidth > 900) sideBtn.click();
   }
 
+  let curSol = 0; // which solution is on screen
   $('[data-copyall]', v).onclick = async () => {
     try {
-      const ok = await copyText(tg.getCode(entry));
+      const i = curSol;
+      const ok = await copyText(tg.getCode(entry).then((c) => splitSolutions(c)[i] ?? ''));
       toast(ok ? 'All code copied' : 'Could not copy. Press and hold on the code to select it.');
     } catch (err) {
       toast('Could not read this code. ' + tg.friendlyError(err));
@@ -1164,11 +1170,23 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
   };
 
   try {
-    const code = await tg.getCode(entry);
-    const lines = highlightLines(code, entry.lang);
-    $('#vcode', v).innerHTML = lines
-      .map((html, i) => `<div class="ln"><span class="no">${i + 1}</span><span class="tx">${html || ' '}</span></div>`)
-      .join('');
+    const sols = splitSolutions(await tg.getCode(entry));
+    const showSol = (i) => {
+      curSol = i;
+      const lines = highlightLines(sols[i], entry.lang);
+      $('#vcode', v).innerHTML = lines
+        .map((html, n) => `<div class="ln"><span class="no">${n + 1}</span><span class="tx">${html || ' '}</span></div>`)
+        .join('');
+      $('#vcode', v).scrollTop = 0;
+      v.querySelectorAll('[data-sol]').forEach((b) => b.classList.toggle('on', +b.dataset.sol === i));
+    };
+    if (sols.length > 1) {
+      const bar = $('#vsols', v);
+      bar.hidden = false;
+      bar.innerHTML = sols.map((_, i) => `<button type="button" class="vsol" data-sol="${i}">Solution ${i + 1}</button>`).join('');
+      bar.querySelectorAll('[data-sol]').forEach((b) => (b.onclick = () => showSol(+b.dataset.sol)));
+    }
+    showSol(0);
   } catch (e) {
     $('#vcode', v).innerHTML = `<div class="loading" style="color:#f3b3ad">Could not load this code. ${esc(tg.friendlyError(e))}</div>`;
   }
@@ -1176,6 +1194,64 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
 
 
 /* ---------- subfolder select used by the New and Edit forms ---------- */
+
+/* ---------- several solutions in the New and Edit forms ---------- */
+
+const SOLUTION_BOX_HTML = (placeholder = '') =>
+  `<div class="sol-bar" id="solbar"></div>
+<textarea class="code-in" id="c" spellcheck="false" autocapitalize="off" autocomplete="off" ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}></textarea>`;
+
+// One code box that switches between "Solution 1", "Solution 2" ... Returns { get() }, which gives
+// the non-empty solutions joined into the single string that is saved.
+function bindSolutions(initial) {
+  const sols = initial.slice();
+  let cur = 0;
+  const ta = $('#c');
+  const bar = $('#solbar');
+  ta.value = sols[0];
+
+  const draw = () => {
+    bar.innerHTML =
+      sols.map((_, i) => `<button type="button" class="sol-tab${i === cur ? ' on' : ''}" data-i="${i}">Solution ${i + 1}</button>`).join('') +
+      '<button type="button" class="sol-add" data-add>+ Add solution</button>' +
+      (sols.length > 1 ? `<button type="button" class="sol-rm" data-rm>Remove solution ${cur + 1}</button>` : '');
+    bar.querySelectorAll('[data-i]').forEach((b) => {
+      b.onclick = () => {
+        sols[cur] = ta.value;
+        cur = +b.dataset.i;
+        ta.value = sols[cur];
+        draw();
+      };
+    });
+    $('[data-add]', bar).onclick = () => {
+      sols[cur] = ta.value;
+      sols.push('');
+      cur = sols.length - 1;
+      ta.value = '';
+      draw();
+      ta.focus();
+    };
+    const rm = $('[data-rm]', bar);
+    if (rm) {
+      rm.onclick = async () => {
+        if (sols[cur].trim() && !(await modal({ title: `Remove solution ${cur + 1}?`, text: 'Its code will be removed when you save.', confirm: 'Remove' }))) return;
+        sols.splice(cur, 1);
+        cur = Math.min(cur, sols.length - 1);
+        ta.value = sols[cur];
+        draw();
+      };
+    }
+  };
+  draw();
+
+  return {
+    get() {
+      sols[cur] = ta.value;
+      const list = sols.map((s) => s.replace(/\r\n/g, '\n')).filter((s) => s.trim());
+      return list.length ? joinSolutions(list) : '';
+    },
+  };
+}
 
 function subSelectHtml(fid, entries, selected) {
   const subs = tg.listSubs(fid, entries);
@@ -1249,8 +1325,8 @@ async function renderNew(fid) {
 <button type="button" class="btn btn-light btn-small" id="browse">Browse files</button>
 <input type="file" id="file" accept="image/*" multiple hidden /></div>
 <div class="thumbs" id="thumbs"></div></div>
-<div class="block"><label class="lbl" for="c">Code</label>
-<textarea class="code-in" id="c" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Paste your code here. Indentation is kept exactly as you paste it." required></textarea></div>
+<div class="block"><label class="lbl" for="c">Code <span>(have more than one answer? use + Add solution)</span></label>
+${SOLUTION_BOX_HTML('Paste your code here. Indentation is kept exactly as you paste it.')}</div>
 <div class="form-foot"><small>Saving sends the code and your screenshots to the channel as one entry.</small>
 <div class="btns"><a class="btn btn-light" href="#/f/${fid}">Cancel</a><button class="btn" id="save">${I.check}Save to Telegram</button></div></div>
 </form></div>`;
@@ -1280,6 +1356,7 @@ async function renderNew(fid) {
     drawThumbs();
   };
 
+  const solutions = bindSolutions(['']);
   bindSubSelect($('#sf'));
   $('#browse').onclick = () => $('#file').click();
   $('#file').onchange = (e) => {
@@ -1323,7 +1400,7 @@ async function renderNew(fid) {
 
   $('#form').onsubmit = async (e) => {
     e.preventDefault();
-    const code = $('#c').value.replace(/\r\n/g, '\n');
+    const code = solutions.get();
     const title = $('#t').value.trim();
     if (!title || !code.trim()) return toast('Add a title and some code first');
     const btn = $('#save');
@@ -1397,8 +1474,8 @@ async function renderEdit(fid, entryId) {
 <div class="txt"><b>Add images</b><small>Images are shrunk before they are sent to Telegram.</small></div>
 <button type="button" class="btn btn-light btn-small" id="browse">Browse files</button>
 <input type="file" id="file" accept="image/*" multiple hidden /></div></div>
-<div class="block"><label class="lbl" for="c">Code</label>
-<textarea class="code-in" id="c" spellcheck="false" autocapitalize="off" autocomplete="off" required></textarea></div>
+<div class="block"><label class="lbl" for="c">Code <span>(have more than one answer? use + Add solution)</span></label>
+${SOLUTION_BOX_HTML()}</div>
 <div class="form-foot"><small>Saving updates this entry in Telegram.</small>
 <div class="btns"><a class="btn btn-light" href="#/f/${fid}/e/${entryId}">Cancel</a><button class="btn" id="save">${I.check}Save changes</button></div></div>
 </form></div>`;
@@ -1407,7 +1484,7 @@ async function renderEdit(fid, entryId) {
   $('#t').value = entry.title;
   $('#q').value = entry.question;
   $('#g').value = entry.tags.join(', ');
-  $('#c').value = oldCode;
+  const solutions = bindSolutions(splitSolutions(oldCode));
 
   const drawThumbs = () => {
     $('#thumbs').innerHTML =
@@ -1488,7 +1565,7 @@ async function renderEdit(fid, entryId) {
 
   $('#form').onsubmit = async (e) => {
     e.preventDefault();
-    const code = $('#c').value.replace(/\r\n/g, '\n');
+    const code = solutions.get();
     const title = $('#t').value.trim();
     if (!title || !code.trim()) return toast('Add a title and some code first');
     const btn = $('#save');
