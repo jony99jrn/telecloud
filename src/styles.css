@@ -544,3 +544,16 @@ h1.title { font-size: clamp(34px, 5vw, 46px); letter-spacing: -0.03em; margin: 3
   .selbar .btns { flex: 1 1 100%; justify-content: center; }
   #out.pad-sel { padding-bottom: 150px; }
 }
+
+/* ---------- several solutions ---------- */
+.sol-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; }
+.sol-tab, .sol-add, .sol-rm { border: 0; cursor: pointer; border-radius: 999px; padding: 9px 16px; font-weight: 600; font-size: 14px; background: rgba(255, 255, 255, 0.6); color: #1d3a5a; }
+.sol-tab.on { background: #101a28; color: #fff; }
+.sol-add { background: transparent; border: 1.5px dashed #6f9bc4; color: #2a5d8f; }
+.sol-rm { background: transparent; color: #b3402f; margin-left: auto; }
+.v-sols { display: flex; gap: 8px; padding: 10px calc(20px + env(safe-area-inset-right)) 0 calc(20px + env(safe-area-inset-left)); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.v-sols[hidden] { display: none; }
+.vsol { flex: none; border: 0; cursor: pointer; border-radius: 999px; padding: 9px 16px; font-weight: 600; background: rgba(255, 255, 255, 0.13); color: #fff; }
+.vsol:hover { background: rgba(255, 255, 255, 0.2); }
+.vsol.on { background: #fff; color: #0e1a24; }
+@media (max-width: 700px) { .sol-tab, .sol-add, .sol-rm { padding: 11px 16px; } }
