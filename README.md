@@ -24,6 +24,7 @@
 - [✨ Key Features](#-key-features)
 - [📷 Screenshots](#-screenshots)
 - [🧭 How It Works](#-how-it-works)
+- [🗑️ The Bin](#️-the-bin)
 - [📁 Storage & Data](#-storage--data)
 - [🚀 Getting Started & User Guide](#-getting-started--user-guide)
   - [Prerequisites](#prerequisites)
@@ -59,6 +60,7 @@
 *   **📲 Installable (PWA)**: Add it to your home screen or desktop from the browser menu and open it like a normal app.
 *   **🤖 Android APK**: A downloadable APK that opens Telecloud in its own app window. It updates itself whenever the website is updated.
 *   **⚡ Offline-Friendly Shell**: A service worker keeps the app screen available when you have no connection. Loading your folders still needs the internet.
+*   **🗑️ Bin with Restore**: Deleting a folder or an entry moves it to the Bin first. Restore it any time, or delete it forever from there.
 *   **🛡️ Safe Saving**: If the connection to Telegram drops, Telecloud reconnects and retries by itself. An entry is never saved half-way: if a step fails, what was already sent is removed again.
 *   **🔒 Private by Design**: Your API keys and login session stay in your own browser, protected by a 6-digit PIN. The app talks directly to Telegram.
 
@@ -94,6 +96,25 @@ When you open a folder, Telecloud reads the messages inside that channel and reb
 
 > [!NOTE]
 > Older versions used `CV · ` folders and the tags `#cv`, `#cvq`, `#cvi` and `#cvpin`. Telecloud still reads all of them, and new data is always saved with the `TC` names.
+
+---
+
+## 🗑️ The Bin
+
+Nothing is deleted right away. When you press **Move to the Bin** on a folder or an entry, it only moves out of sight:
+
+| What you delete | What really happens in Telegram |
+| :--- | :--- |
+| **Folder** | The channel is renamed from `TC · name` to `TC bin · name`. All its entries stay inside. |
+| **Entry** | The tags in its captions change (`#tc` to `#tcbin`, `#tcq` to `#tcqbin`, `#tci` to `#tcibin`). The code, question and screenshots stay in the channel. |
+
+Open the Bin with the **Bin** button on the home page. For each item you can:
+*   **Restore**: puts it back exactly as it was (same subfolder, tags, date and screenshots).
+*   **Delete forever**: the only action that really deletes from Telegram, and it cannot be undone. For a folder you must type its name to confirm.
+*   **Empty Bin**: deletes everything in the Bin forever (you must type `empty`).
+
+> [!NOTE]
+> Items in the Bin still count towards your Telegram storage and channel limit until you delete them forever. A folder in the Bin also shows up in the Telegram app as a channel called `TC bin · name`: do not rename it there, or Telecloud will not find it.
 
 ---
 
@@ -259,7 +280,7 @@ The website's **Get app** button points to `https://github.com/jony99jrn/teleclo
 
 *   **Folder was not created**: Telegram limits how fast channels can be created. If the message asks you to wait, wait that long and try again. Also check that your account does not already have too many channels.
 *   **Login code does not arrive**: Telegram limits how often it sends codes. Wait a few minutes and try again, and check that the API ID and API Hash match the ones on `my.telegram.org`.
-*   **Folders or entries are missing**: Do not rename or delete the `TC · ` channels or the messages inside them in Telegram itself, or Telecloud will not find them.
+*   **Folders or entries are missing**: First check the **Bin**, because deleted items wait there and can be restored. Also do not rename or delete the `TC · ` or `TC bin · ` channels, or the messages inside them, in Telegram itself, or Telecloud will not find them.
 *   **A very large folder opens slowly or looks incomplete**: Telecloud reads up to the newest 20,000 messages of a folder. Entries older than that are still in Telegram but do not show in the app. Splitting the folder into two is the simplest fix.
 *   **Search does not find text inside my code**: On the home page, search covers titles, questions and tags. Open the folder and search there to search the code too.
 *   **"New login" notice from Telegram**: This is expected. It is Telecloud signing in to your account.
