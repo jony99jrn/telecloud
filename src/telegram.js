@@ -29,7 +29,16 @@ const TAGS = {
   question: ['#tcq ', '#cvq '],
   image: ['#tci ', '#cvi '],
   pin: ['#tcpin ', '#cvpin '],
+  // The Bin: a deleted entry keeps all its messages, only the tag in the caption changes
+  // ("#tc " becomes "#tcbin " and so on), so the normal list no longer shows it.
+  binCode: ['#tcbin '],
+  binQuestion: ['#tcqbin '],
+  binImage: ['#tcibin '],
 };
+
+// A deleted folder is the same channel with a new title. It no longer starts with "TC · ", so it
+// drops out of the folder list, and Restore simply renames it back.
+const BIN_PREFIX = 'TC bin · ';
 
 /** The text after the tag when `text` starts with a tag of that kind (old or new), else null. */
 function afterTag(text, kind) {
@@ -376,6 +385,8 @@ export async function signOut() {
   sessionCache = null;
   memKeys = null; // the keys are erased too: sign-in starts empty next time
   wipePlainKeys();
+  binCache.clear();
+  binFolderList = [];
   client = null;
 }
 
@@ -562,28 +573,51 @@ async function countFor(folder) {
     () => client.getMessages(folder.entity, { limit: 1, filter: new Api.InputMessagesFilterDocument() }),
     { ms: 60000 }
   );
-  folder.count = r.total ?? r.length ?? 0;
+  let total = r.total ?? r.length ?? 0;
   folder.last = r[0] ? r[0].date * 1000 : null;
+  // Entries in the Bin are still documents in the channel, so take them off the count.
+  // If this extra lookup fails, the count is simply a little high until the folder is opened.
+  try {
+    const b = await reliable(
+      () => client.getMessages(folder.entity, { limit: 1, search: '#tcbin', filter: new Api.InputMessagesFilterDocument() }),
+      { ms: 60000 }
+    );
+    const inBin = b.total ?? b.length ?? 0;
+    if (inBin > 0 && inBin <= total) total -= inBin;
+  } catch (e) {
+    /* keep the plain count */
+  }
+  folder.count = total;
 }
+
+// Folders that are in the Bin (renamed channels). Filled by listFolders().
+let binFolderList = [];
+export const getBinFolders = () => binFolderList;
 
 export async function listFolders() {
   // Goes through ALL your chats, not just the newest 300, so an old folder never goes missing.
-  const folders = await reliable(
+  const { folders, bin } = await reliable(
     async () => {
       const found = [];
+      const binned = [];
       for await (const d of client.iterDialogs({ limit: MAX_DIALOGS })) {
         const e = d.entity;
         if (!e || e.className !== 'Channel' || !e.broadcast) continue;
         const title = e.title || '';
         const pre = prefixOf(title);
         if (pre) found.push({ id: String(e.id), entity: e, name: title.slice(pre.length), count: 0, last: null });
+        else if (title.toUpperCase().startsWith(BIN_PREFIX.toUpperCase())) {
+          binned.push({ id: String(e.id), entity: e, name: title.slice(BIN_PREFIX.length), count: 0, last: null });
+        }
       }
-      return found;
+      return { folders: found, bin: binned };
     },
     { ms: 180 * 1000 }
   );
   await pool(folders, 4, countFor);
   folders.sort((a, b) => (b.last || 0) - (a.last || 0));
+  bin.sort((a, b) => a.name.localeCompare(b.name));
+  binFolderList = bin;
   return folders;
 }
 
@@ -628,14 +662,53 @@ export async function createFolder(name) {
   return { id: String(ch.id), entity: ch, name: clean, count: 0, last: null };
 }
 
+// Renames the channel. Telegram answers CHAT_NOT_MODIFIED when it already has that title: that is fine.
+async function setChannelTitle(folder, title) {
+  try {
+    await reliable(() => client.invoke(new Api.channels.EditTitle({ channel: folder.entity, title })));
+  } catch (e) {
+    if (e?.errorMessage !== 'CHAT_NOT_MODIFIED') throw e;
+  }
+}
+
+/** "Delete" a folder: it moves to the Bin (nothing is lost) and can be restored. */
+export async function binFolder(folder) {
+  await setChannelTitle(folder, BIN_PREFIX + folder.name);
+  binCache.delete(String(folder.id));
+  binFolderList = [folder, ...binFolderList.filter((f) => f.id !== folder.id)];
+}
+
+/** Brings a folder back out of the Bin. Returns the folder, ready to show in the list. */
+export async function restoreFolder(folder) {
+  await setChannelTitle(folder, PREFIX + folder.name);
+  binFolderList = binFolderList.filter((f) => f.id !== folder.id);
+  try {
+    await countFor(folder);
+  } catch (e) {
+    /* the count fills in when the folder is opened */
+  }
+  return folder;
+}
+
+/** PERMANENT. Deletes the Telegram channel and everything in it. Use only from the Bin. */
 export async function deleteFolder(folder) {
   await reliable(() => client.invoke(new Api.channels.DeleteChannel({ channel: folder.entity })));
+  binFolderList = binFolderList.filter((f) => f.id !== folder.id);
+  binCache.delete(String(folder.id));
 }
 
 /* ---------- entries ---------- */
 
-export async function loadEntries(folder) {
-  const msgs = await reliable(() => client.getMessages(folder.entity, { limit: MAX_MESSAGES }), { ms: 300 * 1000 });
+// Entries of one folder that are in its Bin, kept in memory like the normal list.
+// folder id -> array (null when that folder has not been loaded yet).
+const binCache = new Map();
+export const binEntriesOf = (fid) => binCache.get(String(fid)) || null;
+
+const KINDS = { code: 'code', question: 'question', image: 'image' };
+const BIN_KINDS = { code: 'binCode', question: 'binQuestion', image: 'binImage' };
+
+/** Builds entries out of a folder's messages. `kinds` says which tags to read: the normal ones or the Bin ones. */
+function assemble(msgs, kinds, binned) {
   const entries = new Map();
   const questions = new Map();
   const photos = [];
@@ -643,8 +716,8 @@ export async function loadEntries(folder) {
 
   for (const m of msgs) {
     const text = m.message || '';
-    const codeJson = m.document ? afterTag(text, 'code') : null;
-    const qBody = codeJson === null ? afterTag(text, 'question') : null;
+    const codeJson = m.document ? afterTag(text, kinds.code) : null;
+    const qBody = codeJson === null ? afterTag(text, kinds.question) : null;
     if (codeJson !== null) {
       try {
         const meta = JSON.parse(codeJson);
@@ -658,6 +731,7 @@ export async function loadEntries(folder) {
           lines: meta.n || 0,
           shotCount: meta.s || 0,
           solutions: meta.c || 1,
+          deletedAt: binned ? meta.x || m.date * 1000 : 0, // when it was moved to the Bin
           codeMsg: m,
           msgIds: [m.id],
           question: '',
@@ -675,7 +749,7 @@ export async function loadEntries(folder) {
     } else if (m.photo) {
       const gid = m.groupedId ? String(m.groupedId) : null;
       let id = null;
-      const imgId = afterTag(text, 'image');
+      const imgId = afterTag(text, kinds.image);
       if (imgId !== null) {
         id = imgId.trim();
         if (gid) groups.set(gid, id);
@@ -704,8 +778,14 @@ export async function loadEntries(folder) {
     e.shots.sort((a, b) => a.id - b.id);
     e.shotCount = Math.max(e.shotCount, e.shots.length);
   }
+  return [...entries.values()];
+}
 
-  const list = [...entries.values()].sort((a, b) => b.ts - a.ts);
+export async function loadEntries(folder) {
+  const msgs = await reliable(() => client.getMessages(folder.entity, { limit: MAX_MESSAGES }), { ms: 300 * 1000 });
+  const list = assemble(msgs, KINDS, false).sort((a, b) => b.ts - a.ts);
+  // the same messages also hold the folder's Bin, so it costs no extra requests
+  binCache.set(String(folder.id), assemble(msgs, BIN_KINDS, true).sort((a, b) => b.deletedAt - a.deletedAt));
   folder.count = list.length;
   folder.last = list[0] ? list[0].ts : folder.last;
   return list;
@@ -759,8 +839,8 @@ export function listSubs(fid, entries) {
   return [...seen.values()].sort((a, b) => a.localeCompare(b));
 }
 
-// The #cv caption of an entry, with the subfolder set to `sub`.
-function metaOf(entry, sub) {
+// The #tc caption of an entry, with the subfolder set to `sub`. `tag` and `extra` are only used for the Bin.
+function metaOf(entry, sub, tag = TAGS.code[0], extra = {}) {
   const meta = {
     id: entry.id,
     t: entry.title.slice(0, 120),
@@ -773,7 +853,7 @@ function metaOf(entry, sub) {
   if (entry.solutions > 1) meta.c = entry.solutions;
   const d = cleanSub(sub);
   if (d) meta.d = d;
-  return TAGS.code[0] + JSON.stringify(meta);
+  return tag + JSON.stringify({ ...meta, ...extra });
 }
 
 /**
@@ -893,8 +973,77 @@ export async function addEntry(folder, { title, question, lang, tags, files, cod
   return id;
 }
 
+/** PERMANENT. Deletes the messages of an entry from Telegram. Use only from the Bin. */
 export async function deleteEntry(folder, entry) {
   await reliable(() => client.deleteMessages(folder.entity, entry.msgIds, { revoke: true }));
+  const bin = binCache.get(String(folder.id));
+  if (bin) binCache.set(String(folder.id), bin.filter((e) => e.id !== entry.id));
+}
+
+/**
+ * Changes the tag of every message of an entry (code, question, screenshots) between the normal and
+ * the Bin version. The code message goes last, so an entry never shows up half-moved, and if a step
+ * fails everything already changed is put back. Only captions change: nothing is deleted or re-sent.
+ */
+async function retag(folder, entry, toBin) {
+  const ent = folder.entity;
+  const id = entry.id;
+  const edit = (params) => reliable(() => safeEdit(ent, params), { ms: UPLOAD_TIMEOUT });
+  const imgKind = toBin ? 'image' : 'binImage'; // the tag the screenshots have now
+  const done = []; // undo steps
+
+  try {
+    for (const m of entry.shots) {
+      if ((afterTag(m.message, imgKind) || '').trim() !== id) continue;
+      const before = m.message;
+      const after = (toBin ? TAGS.binImage[0] : TAGS.image[0]) + id;
+      await edit({ message: m.id, text: after });
+      m.message = after;
+      done.push(async () => {
+        await edit({ message: m.id, text: before });
+        m.message = before;
+      });
+    }
+    if (entry.qMsgId) {
+      const before = (toBin ? TAGS.question[0] : TAGS.binQuestion[0]) + id + '\n' + entry.question;
+      const after = (toBin ? TAGS.binQuestion[0] : TAGS.question[0]) + id + '\n' + entry.question;
+      await edit({ message: entry.qMsgId, text: after });
+      done.push(() => edit({ message: entry.qMsgId, text: before }));
+    }
+    const before = entry.codeMsg.message;
+    const after = toBin ? metaOf(entry, entry.sub, TAGS.binCode[0], { x: Date.now() }) : metaOf(entry, entry.sub);
+    await edit({ message: entry.codeMsg.id, text: after });
+    entry.codeMsg.message = after;
+    done.push(async () => {
+      await edit({ message: entry.codeMsg.id, text: before });
+      entry.codeMsg.message = before;
+    });
+  } catch (e) {
+    for (const undo of done.reverse()) {
+      try {
+        await undo();
+      } catch (e2) {
+        console.warn('undo failed', e2);
+      }
+    }
+    throw e;
+  }
+}
+
+/** "Delete" an entry: it moves to the Bin and can be restored. */
+export async function binEntry(folder, entry) {
+  await retag(folder, entry, true);
+  entry.deletedAt = Date.now();
+  const key = String(folder.id);
+  binCache.set(key, [entry, ...(binCache.get(key) || []).filter((e) => e.id !== entry.id)]);
+}
+
+/** Brings an entry back out of the Bin. */
+export async function restoreEntry(folder, entry) {
+  await retag(folder, entry, false);
+  entry.deletedAt = 0;
+  const key = String(folder.id);
+  if (binCache.has(key)) binCache.set(key, binCache.get(key).filter((e) => e.id !== entry.id));
 }
 
 export async function getCode(entry) {

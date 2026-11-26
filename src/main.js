@@ -514,7 +514,8 @@ async function renderHome() {
   app.innerHTML = `<div class="shell">${header()}
 <div class="head-row"><div><h1 class="title">Your folders</h1>
 <p class="sub">Each folder is a private channel in your Telegram. Open one to see your code.</p></div>
-<button class="btn" data-newfolder>${I.plus}New folder</button></div>
+<div class="head-btns"><a class="btn btn-light" href="#/bin">${I.trash}Bin</a>
+<button class="btn" data-newfolder>${I.plus}New folder</button></div></div>
 <label class="searchbar">${I.search}<input id="q" placeholder="Search folders and code" autocomplete="off" /></label>
 <div id="out"><div class="loading">Loading your folders…</div></div></div>`;
   bindShared(app);
@@ -726,7 +727,7 @@ async function renderFolder(fid, entryId) {
 <a class="btn" href="#/f/${fid}/new">${I.plus}Add entry</a></div></div>
 <label class="searchbar">${I.search}<input id="q" placeholder="Search by title, question, tag or code" autocomplete="off" /></label>
 <div id="out"><div class="loading">Loading entries…</div></div>
-<div class="footer-actions"><button class="link-btn danger" id="delfolder">Delete this folder</button></div></div>
+<div class="footer-actions"><button class="link-btn danger" id="delfolder">Move this folder to the Bin</button></div></div>
 <div class="selbar" id="selbar" hidden><span id="selcount">0 selected</span>
 <div class="btns"><button class="btn btn-light btn-small" id="selall">Select all</button>
 <button class="btn btn-small" id="seldl">${I.download}Download</button>
@@ -741,16 +742,17 @@ async function renderFolder(fid, entryId) {
 
   $('#delfolder').onclick = async () => {
     const ok = await modal({
-      title: `Delete “${folder.name}”?`,
-      text: 'This deletes the Telegram channel and every entry inside it. This cannot be undone.',
-      confirm: 'Delete folder',
+      title: `Move “${folder.name}” to the Bin?`,
+      text: 'Nothing is deleted. The folder and all its entries wait in the Bin, and you can restore them any time.',
+      confirm: 'Move to Bin',
     });
     if (!ok) return;
     try {
-      await tg.deleteFolder(folder);
+      toast('Moving to the Bin…', 0);
+      await tg.binFolder(folder);
       S.folders = S.folders.filter((f) => f.id !== fid);
       delete S.entries[fid];
-      toast('Folder deleted');
+      toast('Moved to the Bin');
       location.hash = '#/';
     } catch (e) {
       toast(tg.friendlyError(e));
@@ -831,14 +833,15 @@ async function renderFolder(fid, entryId) {
   };
 
   const deleteOne = async (e) => {
-    const ok = await modal({ title: 'Delete this entry?', text: 'It will also be removed from your Telegram channel.', confirm: 'Delete' });
+    const ok = await modal({ title: 'Move this entry to the Bin?', text: 'You can restore it from the Bin any time.', confirm: 'Move to Bin' });
     if (!ok) return;
     try {
-      await tg.deleteEntry(folder, e);
+      toast('Moving to the Bin…', 0);
+      await tg.binEntry(folder, e);
       entries.splice(entries.indexOf(e), 1);
       picked.delete(e.id);
       folder.count = entries.length;
-      toast('Entry deleted');
+      toast('Moved to the Bin');
     } catch (err) {
       toast(tg.friendlyError(err));
     }
@@ -1028,7 +1031,7 @@ ${e.solutions > 1 ? '' : `<button class="btn btn-small" data-copy="${e.id}">${I.
                 draw();
               },
             },
-            { label: 'Delete', icon: I.trash, danger: true, fn: () => deleteOne(e) },
+            { label: 'Move to Bin', icon: I.trash, danger: true, fn: () => deleteOne(e) },
           ]);
         };
     });
@@ -1078,6 +1081,197 @@ ${e.solutions > 1 ? '' : `<button class="btn btn-small" data-copy="${e.id}">${I.
   }
 }
 
+/* ================= BIN ================= */
+
+// Deleted folders and entries wait here. Restore puts them back; "Delete forever" is the only
+// place in the app that really deletes something from Telegram.
+async function renderBin() {
+  app.innerHTML = `<div class="shell">${header()}
+<a class="back" href="#/">${I.back}All folders</a>
+<div class="head-row"><div><h1 class="title">Bin</h1>
+<p class="sub">Deleted folders and entries wait here. Restore puts them back exactly as they were. Delete forever cannot be undone.</p></div>
+<div class="head-btns"><button class="btn btn-light danger" id="emptybin" hidden>${I.trash}Empty Bin</button></div></div>
+<div id="out"><div class="loading">Loading the Bin…</div></div></div>`;
+  bindShared(app);
+  let gone = false;
+  S.cleanup = () => {
+    gone = true;
+  };
+
+  try {
+    await ensureFolders();
+  } catch (e) {
+    $('#out').innerHTML = `<div class="empty">Could not load your folders. ${esc(tg.friendlyError(e))}<br/><button class="link-btn" id="retry">Try again</button></div>`;
+    $('#retry').onclick = renderBin;
+    return;
+  }
+
+  let loading = true;
+  let progress = 'Checking your folders for deleted entries…';
+  let failed = 0;
+  let busy = false;
+
+  const binEntries = () => {
+    const out = [];
+    for (const f of S.folders) for (const e of tg.binEntriesOf(f.id) || []) out.push({ f, e });
+    return out.sort((a, b) => b.e.deletedAt - a.e.deletedAt);
+  };
+
+  const binFolderCard = (f) => `<div class="card folder bin-card">
+<div class="row"><span class="ficon">${I.folder}</span><span class="badge">Folder</span></div>
+<div class="info"><h3>${esc(f.name)}</h3><div class="meta">Everything inside it is kept</div></div>
+<div class="actions"><button class="btn btn-small" data-act="rf" data-f="${f.id}">Restore</button>
+<button class="btn btn-light btn-small danger" data-act="df" data-f="${f.id}">Delete forever</button></div></div>`;
+
+  const binEntryCard = ({ f, e }) => `<div class="card entry bin-card">
+<div class="row"><span class="badge">${esc(BADGE[e.lang] || 'Txt')}</span><span class="date">Deleted ${fmtDate(e.deletedAt)}</span></div>
+<h3>${esc(e.title)}</h3>
+<div class="meta">${esc(f.name)} · ${plural(e.lines, 'line')}${e.shotCount ? ' · ' + plural(e.shotCount, 'screenshot') : ''}</div>
+<div class="actions"><button class="btn btn-small" data-act="re" data-f="${f.id}" data-e="${e.id}">Restore</button>
+<button class="btn btn-light btn-small danger" data-act="de" data-f="${f.id}" data-e="${e.id}">Delete forever</button></div></div>`;
+
+  const draw = () => {
+    const out = $('#out');
+    if (gone || !out) return;
+    const folders = tg.getBinFolders();
+    const entries = binEntries();
+    $('#emptybin').hidden = !(folders.length || entries.length);
+    let html = '';
+    if (folders.length) html += `<h2 class="section-title">Folders</h2><div class="grid">${folders.map(binFolderCard).join('')}</div>`;
+    if (entries.length) html += `<h2 class="section-title">Entries</h2><div class="grid">${entries.map(binEntryCard).join('')}</div>`;
+    if (loading) html += `<div class="loading">${esc(progress)}</div>`;
+    else {
+      if (!folders.length && !entries.length) html = `<div class="empty">The Bin is empty. Folders and entries you delete show up here.</div>`;
+      if (failed) html += `<div class="empty">Could not check ${plural(failed, 'folder')} for deleted entries. Open the Bin again to retry.</div>`;
+    }
+    out.innerHTML = html;
+  };
+
+  const run = async (work) => {
+    if (busy) return;
+    busy = true;
+    try {
+      await work();
+    } catch (err) {
+      toast(tg.friendlyError(err));
+    } finally {
+      busy = false;
+      draw();
+    }
+  };
+
+  const findBinEntry = (fid, id) => (tg.binEntriesOf(fid) || []).find((e) => e.id === id);
+
+  $('#out').onclick = (ev) => {
+    const b = ev.target.closest('button[data-act]');
+    if (!b || busy) return;
+    const act = b.dataset.act;
+
+    if (act === 'rf' || act === 'df') {
+      const f = tg.getBinFolders().find((x) => x.id === b.dataset.f);
+      if (!f) return;
+      if (act === 'rf')
+        return run(async () => {
+          toast('Restoring folder…', 0);
+          const r = await tg.restoreFolder(f);
+          S.folders = [r, ...S.folders.filter((x) => x.id !== r.id)];
+          toast('Folder restored');
+        });
+      return run(async () => {
+        const typed = await modal({
+          title: `Delete “${f.name}” forever?`,
+          text: 'This permanently deletes the Telegram channel and every entry inside it. It cannot be recovered. Type the folder name to confirm.',
+          input: true,
+          placeholder: f.name,
+          confirm: 'Delete forever',
+        });
+        if (typed === null) return;
+        if (typed.toLowerCase() !== f.name.trim().toLowerCase()) return toast('That is not the folder name. Nothing was deleted.');
+        toast('Deleting…', 0);
+        await tg.deleteFolder(f);
+        toast('Folder deleted forever');
+      });
+    }
+
+    const f = S.folders.find((x) => x.id === b.dataset.f);
+    const e = f && findBinEntry(f.id, b.dataset.e);
+    if (!e) return;
+    if (act === 're')
+      return run(async () => {
+        toast('Restoring entry…', 0);
+        await tg.restoreEntry(f, e);
+        const list = S.entries[f.id];
+        if (list) {
+          list.push(e);
+          list.sort((a, c) => c.ts - a.ts);
+          f.count = list.length;
+        } else f.count += 1;
+        toast('Entry restored');
+      });
+    if (act === 'de')
+      return run(async () => {
+        const ok = await modal({ title: 'Delete this entry forever?', text: 'It is removed from your Telegram channel and cannot be recovered.', confirm: 'Delete forever' });
+        if (!ok) return;
+        toast('Deleting…', 0);
+        await tg.deleteEntry(f, e);
+        toast('Entry deleted forever');
+      });
+  };
+
+  $('#emptybin').onclick = () =>
+    run(async () => {
+      const folders = [...tg.getBinFolders()];
+      const entries = binEntries();
+      const typed = await modal({
+        title: 'Empty the Bin?',
+        text: `This permanently deletes ${plural(folders.length, 'folder')} and ${plural(entries.length, 'entry').replace('entrys', 'entries')} from Telegram. It cannot be undone. Type “empty” to confirm.`,
+        input: true,
+        placeholder: 'empty',
+        confirm: 'Delete forever',
+      });
+      if (typed === null) return;
+      if (typed.toLowerCase() !== 'empty') return toast('Nothing was deleted.');
+      let bad = 0;
+      let n = 0;
+      const total = folders.length + entries.length;
+      for (const { f, e } of entries) {
+        toast(`Deleting ${++n} of ${total}…`, 0);
+        try {
+          await tg.deleteEntry(f, e);
+        } catch (err) {
+          bad++;
+        }
+      }
+      for (const f of folders) {
+        toast(`Deleting ${++n} of ${total}…`, 0);
+        try {
+          await tg.deleteFolder(f);
+        } catch (err) {
+          bad++;
+        }
+      }
+      toast(bad ? `Deleted ${total - bad} of ${total}. Some could not be deleted.` : 'The Bin is empty');
+    });
+
+  draw();
+
+  // Entries live inside each folder's messages, so every folder is read once (and kept for later).
+  const todo = S.folders.filter((f) => !S.entries[f.id]);
+  let n = 0;
+  for (const f of todo) {
+    if (gone) return;
+    progress = `Checking your folders for deleted entries… ${++n} of ${todo.length}`;
+    draw();
+    try {
+      S.entries[f.id] = await tg.loadEntries(f);
+    } catch (e) {
+      failed++;
+    }
+  }
+  loading = false;
+  draw();
+}
+
 /* ================= VIEWER (full screen) ================= */
 
 async function openViewer(folder, entry) {
@@ -1094,7 +1288,7 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
 <button class="vbtn primary grow" data-copyall>${I.copy}<span>Copy </span></button>
 <button class="vbtn sq" data-dl aria-label="Download code file">${I.download}</button>
 <button class="vbtn sq" data-edit aria-label="Edit entry">${I.edit}</button>
-<button class="vbtn sq" data-del aria-label="Delete entry">${I.trash}</button>
+<button class="vbtn sq" data-del aria-label="Move entry to the Bin" title="Move to the Bin">${I.trash}</button>
 <button class="vbtn sq" data-close aria-label="Close">${I.x}</button></div></div>
 <div class="v-sols" id="vsols" hidden></div>
 <div class="v-body"><div class="v-code" id="vcode"><div class="loading" style="color:#a8bbd0">Loading code…</div></div>
@@ -1122,13 +1316,14 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
   $('[data-dl]', v).onclick = async () => downloadToast(await downloadEntries([entry]), 1);
 
   $('[data-del]', v).onclick = async () => {
-    const ok = await modal({ title: 'Delete this entry?', text: 'It will also be removed from your Telegram channel.', confirm: 'Delete' });
+    const ok = await modal({ title: 'Move this entry to the Bin?', text: 'You can restore it from the Bin any time.', confirm: 'Move to Bin' });
     if (!ok) return;
     try {
-      await tg.deleteEntry(folder, entry);
+      toast('Moving to the Bin…', 0);
+      await tg.binEntry(folder, entry);
       S.entries[folder.id] = S.entries[folder.id].filter((e) => e.id !== entry.id);
       folder.count = S.entries[folder.id].length;
-      toast('Entry deleted');
+      toast('Moved to the Bin');
       location.hash = `#/f/${folder.id}`;
     } catch (e) {
       toast(tg.friendlyError(e));
@@ -1828,6 +2023,7 @@ function route() {
   if (!S.authed) return renderLogin();
   const p = location.hash.replace(/^#\/?/, '').split('/');
   if (p[0] === 'profile') return renderProfile();
+  if (p[0] === 'bin') return renderBin();
   if (p[0] === 'f' && p[1]) {
     if (p[2] === 'new') return renderNew(p[1]);
     if (p[2] === 'edit' && p[3]) return renderEdit(p[1], p[3]);
