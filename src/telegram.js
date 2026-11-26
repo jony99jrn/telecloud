@@ -59,6 +59,10 @@ export const extFor = (lang) => EXT[lang] || 'txt';
 // Telegram answers "everything" with a limit this big when listing chats.
 const MAX_DIALOGS = 20000;
 
+// How many messages of one folder are read when it is opened (newest first). An entry uses 1 to 3+
+// messages (code, question, and one per screenshot), so this holds several thousand entries.
+const MAX_MESSAGES = 20000;
+
 let client = null;
 let pending = null;
 let lockHandle = null; // set once the PIN is entered or created
@@ -631,7 +635,7 @@ export async function deleteFolder(folder) {
 /* ---------- entries ---------- */
 
 export async function loadEntries(folder) {
-  const msgs = await reliable(() => client.getMessages(folder.entity, { limit: 3000 }), { ms: 120 * 1000 });
+  const msgs = await reliable(() => client.getMessages(folder.entity, { limit: MAX_MESSAGES }), { ms: 300 * 1000 });
   const entries = new Map();
   const questions = new Map();
   const photos = [];
