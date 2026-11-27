@@ -64,6 +64,22 @@ const fmtDay = (ts) => new Date(ts).toLocaleDateString('en-GB', { day: 'numeric'
 const REPO_URL = 'https://github.com/jony99jrn/telecloud';
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const CODE_EXT = /\.(c|h|cpp|hpp|cc|cxx|java|py|js|jsx|ts|tsx|html|css|sql|cs|go|rs|php|kt|swift|rb|sh|bat|asm|json|xml|yml|yaml|txt|md|csv)$/i;
+const CODE_ACCEPT = '.c,.h,.cpp,.hpp,.cc,.java,.py,.js,.jsx,.ts,.tsx,.html,.css,.sql,.cs,.go,.rs,.php,.kt,.swift,.rb,.sh,.bat,.asm,.json,.xml,.yml,.yaml,.txt,.md,.csv';
+
+// Which language an entry gets for a code file, by its extension.
+function langOfFile(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (ext === 'c' || ext === 'h') return 'C';
+  if (['cpp', 'hpp', 'cc', 'cxx'].includes(ext)) return 'C++';
+  if (ext === 'java') return 'Java';
+  if (ext === 'py') return 'Python';
+  if (ext === 'js' || ext === 'ts' || ext === 'jsx' || ext === 'tsx') return 'JavaScript';
+  if (ext === 'sql') return 'SQL';
+  if (ext === 'html' || ext === 'css') return 'HTML/CSS';
+  return 'Other';
+}
+
 const BADGE = { C: 'C', 'C++': 'C++', Java: 'Java', Python: 'Py', JavaScript: 'JS', SQL: 'SQL', 'HTML/CSS': 'HTML', Other: 'Txt' };
 
 // Accepts text or a promise of text. Returns true if the text reached the clipboard.
@@ -164,35 +180,6 @@ async function downloadEntries(list) {
         if (list.length > 1 || parts.length > 1) await new Promise((r) => setTimeout(r, 400)); // browsers drop downloads fired at the same instant
       }
       ok++;
-    } catch (err) {
-      /* counted as not downloaded */
-    }
-  }
-  return ok;
-}
-
-const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B');
-const extBadge = (name) => (/\.[A-Za-z0-9]{1,5}$/.test(name) ? name.split('.').pop().toUpperCase() : 'FILE');
-
-function saveBlob(name, blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 15000);
-}
-
-/** Downloads uploaded files with their own names. Returns how many worked. */
-async function downloadFiles(list) {
-  let ok = 0;
-  for (const f of list) {
-    try {
-      saveBlob(f.name, new Blob([await tg.getFileData(f)], { type: f.mime || 'application/octet-stream' }));
-      ok++;
-      if (list.length > 1) await new Promise((r) => setTimeout(r, 400));
     } catch (err) {
       /* counted as not downloaded */
     }
@@ -730,6 +717,25 @@ async function pickSub({ title, text, subs, current }) {
   return clean || null;
 }
 
+// Asks the person to pick one of a few options. Resolves to the option's number, or null if cancelled.
+function askChoice({ title, text, options }) {
+  return new Promise((resolve) => {
+    const back = document.createElement('div');
+    back.className = 'modal-back';
+    back.innerHTML = `<div class="modal"><h3>${esc(title)}</h3>${text ? `<p>${esc(text)}</p>` : ''}
+<div class="picklist">${options.map((o, i) => `<button type="button" class="pick" data-i="${i}">${I.folder}<span>${esc(o)}</span></button>`).join('')}</div>
+<div class="btns"><button type="button" class="btn btn-light btn-small" data-x>Cancel</button></div></div>`;
+    document.body.appendChild(back);
+    const done = (v) => {
+      back.remove();
+      resolve(v);
+    };
+    back.querySelectorAll('.pick').forEach((b) => (b.onclick = () => done(+b.dataset.i)));
+    $('[data-x]', back).onclick = () => done(null);
+    back.addEventListener('mousedown', (e) => e.target === back && done(null));
+  });
+}
+
 /* ================= FOLDER ================= */
 
 const entriesWord = (n) => plural(n, 'entry').replace('entrys', 'entries');
@@ -747,7 +753,7 @@ async function renderFolder(fid, entryId) {
   const picked = new Set();
   let visible = [];
   let gone = false;
-  let uploading = false;
+  let importing = false;
 
   app.innerHTML = `<div class="shell">${header()}
 <a class="back" id="backlink" href="#/">${I.back}All folders</a>
@@ -755,9 +761,9 @@ async function renderFolder(fid, entryId) {
 <div><h1 id="ftitle">${esc(folder.name)}</h1><p id="count">Stored in a private Telegram channel.</p></div></div>
 <div class="head-btns"><button class="btn btn-light" id="selbtn">${I.check}Select</button>
 <button class="btn btn-light" id="newsub">${I.folder}New subfolder</button>
-<button class="btn btn-light" id="upfiles">${I.up}Upload files</button>
+<button class="btn btn-light" id="upcode">${I.up}Upload code</button>
 <a class="btn" href="#/f/${fid}/new">${I.plus}Add entry</a></div></div>
-<input type="file" id="filepick" multiple hidden accept="${UPLOAD_ACCEPT}" />
+<input type="file" id="codepick" multiple hidden accept="${CODE_ACCEPT}" />
 <label class="searchbar">${I.search}<input id="q" placeholder="Search by title, question, tag or code" autocomplete="off" /></label>
 <div id="out"><div class="loading">Loading entries…</div></div>
 <div class="footer-actions"><button class="link-btn danger" id="delfolder">Move this folder to the Bin</button></div></div>
@@ -801,7 +807,6 @@ async function renderFolder(fid, entryId) {
     return;
   }
   const entries = S.entries[fid];
-  const files = tg.filesOf(fid); // uploaded files of this folder (changed in place)
 
   let codesLoading = null;
   const loadCodes = () =>
@@ -849,14 +854,14 @@ async function renderFolder(fid, entryId) {
     const subs = tg.listSubs(fid, entries);
     const here = list.every((e) => e.sub === list[0].sub) ? list[0].sub : '';
     const target = await pickSub({
-      title: list.length === 1 ? 'Move to subfolder' : `Move ${list.length} items`,
-      text: 'Only the caption of each item changes. Your code, questions, screenshots and files stay as they are.',
+      title: list.length === 1 ? 'Move to subfolder' : `Move ${list.length} entries`,
+      text: 'Only the caption of each entry changes. Your code, questions and screenshots stay as they are.',
       subs,
       current: here,
     });
     if (target === null) return;
     try {
-      toast(`Moving ${list.length === 1 ? 'item' : 'items'}…`, 0);
+      toast(`Moving ${list.length === 1 ? 'entry' : 'entries'}…`, 0);
       await tg.moveEntries(folder, list, target, (d, t) => t > 1 && toast(`Moving ${d} of ${t}…`, 0));
       toast(target ? `Moved to “${target}”` : 'Moved to the main folder');
       if (selecting) {
@@ -885,70 +890,71 @@ async function renderFolder(fid, entryId) {
     draw();
   };
 
-  const deleteFile = async (f) => {
-    const ok = await modal({ title: 'Move this file to the Bin?', text: 'You can restore it from the Bin any time.', confirm: 'Move to Bin' });
-    if (!ok) return;
-    try {
-      toast('Moving to the Bin…', 0);
-      await tg.binFile(folder, f);
-      picked.delete(f.id);
-      toast('Moved to the Bin');
-    } catch (err) {
-      toast(tg.friendlyError(err));
-    }
-    draw();
-  };
-
-  const renameFile = async (f) => {
-    const name = await modal({ title: 'Rename file', input: true, placeholder: f.name, confirm: 'Rename' });
-    if (!name || name === f.name) return;
-    try {
-      toast('Renaming…', 0);
-      await tg.renameFile(folder, f, name);
-      toast('Renamed');
-    } catch (err) {
-      toast(tg.friendlyError(err));
-    }
-    draw();
-  };
-
-  // Uploads the picked files into the folder you are looking at (or the open subfolder).
-  const uploadFiles = async (picks) => {
+  // Upload code: every code file becomes a normal entry (so Edit, + Add solution, questions and
+  // screenshots all work). Several files can also become ONE question with several solutions.
+  const importCode = async (picks) => {
     picks = [...picks];
-    if (!picks.length || uploading) return;
-    const target = cur ?? '';
-    const ok = picks.filter((f) => canUpload(f) && f.size > 0 && f.size <= tg.MAX_UPLOAD);
-    const skipped = picks.length - ok.length;
-    if (!ok.length) return toast('Only code files and pictures can be uploaded (no PDFs), up to 100 MB each.');
-    uploading = true;
-    $('#upfiles').disabled = true;
-    let done = 0;
-    let bad = 0;
-    for (const file of ok) {
-      const label = ok.length > 1 ? ` ${done + bad + 1} of ${ok.length}` : '';
-      try {
-        await tg.addFile(folder, file, target, {
-          onStatus: (t) => !gone && toast(t, 0),
-          onProgress: (p) => !gone && toast(`Uploading${label}… ${Math.round(p * 100)}%`, 0),
-        });
-        done++;
-        if (!gone) draw();
-      } catch (err) {
-        bad++;
-        if (!gone && ok.length === 1) toast(tg.friendlyError(err));
+    if (!picks.length || importing) return;
+    const list = picks
+      .filter((f) => CODE_EXT.test(f.name) && f.size > 0 && f.size <= 1024 * 1024)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    const skipped = picks.length - list.length;
+    if (!list.length) return toast('Pick code files up to 1 MB each (.c, .cpp, .java, .py, .js and similar). PDFs are not accepted.');
+    const items = await Promise.all(list.map(async (f) => ({ name: f.name, text: (await f.text()).replace(/\r\n/g, '\n') })));
+    const baseOf = (n) => n.replace(/\.[^.]+$/, '').slice(0, 120) || 'Code';
+
+    let jobs;
+    if (items.length === 1) {
+      jobs = [{ title: baseOf(items[0].name), lang: langOfFile(items[0].name), code: items[0].text }];
+    } else {
+      const c = await askChoice({
+        title: `${items.length} code files`,
+        text: 'Are they answers to the same question, or different questions?',
+        options: [`One question with ${items.length} solutions`, `${items.length} separate entries`],
+      });
+      if (c === null) return;
+      if (c === 0) {
+        const name = await modal({ title: 'Name this question', text: 'It becomes the entry title. You can add the question text later with Edit.', input: true, placeholder: baseOf(items[0].name), confirm: 'Save' });
+        if (name === null) return;
+        jobs = [{ title: name.slice(0, 120), lang: langOfFile(items[0].name), code: joinSolutions(items.map((i) => i.text)) }];
+      } else {
+        jobs = items.map((i) => ({ title: baseOf(i.name), lang: langOfFile(i.name), code: i.text }));
       }
     }
-    uploading = false;
-    if (gone) return;
-    $('#upfiles').disabled = false;
-    if (ok.length > 1 || !bad) {
-      const dest = target ? ` to “${target}”` : '';
-      toast(
-        bad
-          ? `Uploaded ${done} of ${ok.length}. ${bad} failed.`
-          : `Uploaded ${plural(done, 'file')}${dest}${skipped ? `. ${plural(skipped, 'file')} skipped (not code or a picture, empty, or over 100 MB).` : ''}`
-      );
+
+    importing = true;
+    $('#upcode').disabled = true;
+    const sub = cur ?? '';
+    let done = 0;
+    let bad = 0;
+    let lastErr = null;
+    for (const j of jobs) {
+      toast(`Saving ${done + bad + 1} of ${jobs.length}…`, 0);
+      try {
+        await tg.addEntry(folder, { title: j.title, question: '', lang: j.lang, tags: [], files: [], code: j.code, sub, onStatus: (t) => !gone && toast(t, 0) });
+        done++;
+      } catch (err) {
+        bad++;
+        lastErr = err;
+      }
     }
+    importing = false;
+    try {
+      const fresh = await tg.loadEntries(folder);
+      entries.splice(0, entries.length, ...fresh); // same array, so everything on screen stays connected
+    } catch (err) {
+      /* the new entries show up the next time the folder opens */
+    }
+    if (gone) return;
+    $('#upcode').disabled = false;
+    if (bad && !done) toast(tg.friendlyError(lastErr));
+    else if (bad) toast(`Saved ${done} of ${jobs.length}. ${bad} failed.`);
+    else
+      toast(
+        done === 1
+          ? 'Saved. Open it and press Edit to add the question, screenshots or more solutions.'
+          : `Saved ${plural(done, 'entry').replace('entrys', 'entries')}${skipped ? `. ${plural(skipped, 'file')} skipped.` : ''}`
+      );
     draw();
   };
 
@@ -962,7 +968,7 @@ async function renderFolder(fid, entryId) {
           if (!next || next === name) return;
           try {
             toast('Renaming…', 0);
-            await tg.moveEntries(folder, [...entries, ...files].filter((e) => inSub(e, name)), next);
+            await tg.moveEntries(folder, entries.filter((e) => inSub(e, name)), next);
             tg.removeLocalSub(fid, name);
             tg.addLocalSub(fid, next);
             toast('Subfolder renamed');
@@ -979,13 +985,13 @@ async function renderFolder(fid, entryId) {
         fn: async () => {
           const ok = await modal({
             title: `Remove “${name}”?`,
-            text: 'Its entries and files are not deleted. They move back to the main folder.',
+            text: 'Its entries are not deleted. They move back to the main folder.',
             confirm: 'Remove',
           });
           if (!ok) return;
           try {
             toast('Removing…', 0);
-            await tg.moveEntries(folder, [...entries, ...files].filter((e) => inSub(e, name)), '');
+            await tg.moveEntries(folder, entries.filter((e) => inSub(e, name)), '');
             tg.removeLocalSub(fid, name);
             toast('Subfolder removed');
           } catch (err) {
@@ -998,11 +1004,9 @@ async function renderFolder(fid, entryId) {
 
   const subCard = (name, i) => {
     const n = entries.filter((e) => inSub(e, name)).length;
-    const nf = files.filter((e) => inSub(e, name)).length;
-    const meta = [n ? entriesWord(n) : '', nf ? plural(nf, 'file') : ''].filter(Boolean).join(' · ') || 'Empty';
     return `<div class="card folder subcard" data-sub="${i}" tabindex="0" role="link">
 <div class="row"><span class="ficon">${I.folder}</span><button type="button" class="dots" data-subdots="${i}" aria-label="Subfolder options">${I.dots}</button></div>
-<div class="info"><h3>${esc(name)}</h3><div class="meta">${meta}</div></div><span class="chev">${I.chev}</span></div>`;
+<div class="info"><h3>${esc(name)}</h3><div class="meta">${n ? entriesWord(n) : 'Empty'}</div></div><span class="chev">${I.chev}</span></div>`;
   };
 
   const entryCard = (e, showSub) => `<div class="card entry${selecting ? ' selectable' : ''}${picked.has(e.id) ? ' picked' : ''}" data-id="${e.id}">
@@ -1018,14 +1022,6 @@ ${
 <a class="btn btn-light btn-small" href="#/f/${fid}/edit/${e.id}">${I.edit}Edit</a>
 ${e.solutions > 1 ? '' : `<button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy </button>`}</div>`
 }</div>`;
-
-  const fileCard = (f, showSub) => `<div class="card entry filecard${selecting ? ' selectable' : ''}${picked.has(f.id) ? ' picked' : ''}" data-fid="${f.id}">
-<div class="row"><span class="badge">${esc(extBadge(f.name))}</span><span class="date">${fmtDate(f.ts)}</span>
-${selecting ? `<span class="chk" aria-hidden="true">${I.check}</span>` : `<button type="button" class="dots" data-fdots="${f.id}" aria-label="More options">${I.dots}</button>`}</div>
-<h3>${esc(f.name)}</h3>
-<div class="meta">${fmtSize(f.size)}${showSub && f.sub ? ` · <span class="subchip">${I.folder}${esc(f.sub)}</span>` : ''}</div>
-${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fopen="${f.id}">${I.ext}Open</button>
-<button class="btn btn-light btn-small" data-fdl="${f.id}">${I.download}Download</button></div>`}</div>`;
 
   function draw() {
     closeMenu();
@@ -1047,38 +1043,28 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fope
     $('#count').textContent =
       cur !== null
         ? `Subfolder of ${folder.name}.`
-        : `${entriesWord(entries.length)}${files.length ? ' · ' + plural(files.length, 'file') : ''}${subs.length ? ' · ' + plural(subs.length, 'subfolder') : ''}. Stored in a private Telegram channel.`;
+        : `${entriesWord(entries.length)}${subs.length ? ' · ' + plural(subs.length, 'subfolder') : ''}. Stored in a private Telegram channel.`;
     $('#newsub').hidden = cur !== null;
     const addLink = $('.head-btns a.btn');
     addLink.href = `#/f/${fid}/new`;
 
-    const pick = (list, test) => (q ? list.filter(test) : cur === null ? list.filter((e) => !e.sub) : list.filter((e) => inSub(e, cur)));
-    const visEntries = pick(entries, (e) => matches(e, q));
-    const visFiles = pick(files, (f) => f.name.toLowerCase().includes(q));
-    visible = [...visEntries, ...visFiles];
+    visible = q ? entries.filter((e) => matches(e, q)) : cur === null ? entries.filter((e) => !e.sub) : entries.filter((e) => inSub(e, cur));
 
     let html = '';
     const showSubCards = !q && cur === null && subs.length > 0;
-    if (!entries.length && !files.length && !subs.length) {
-      $('#out').innerHTML = `<div class="empty">Nothing here yet. Tap “Add entry” to save your first code, or “Upload files” to add code files and pictures.</div>`;
+    if (!entries.length && !subs.length) {
+      $('#out').innerHTML = `<div class="empty">Nothing here yet. Tap “Add entry” to save your first code, or “Upload code” to add code files.</div>`;
       syncSel();
       return;
     }
     if (showSubCards) html += `<h2 class="section-title">Subfolders</h2><div class="grid">${subs.map(subCard).join('')}</div>`;
-    if (visEntries.length) {
-      if (showSubCards || visFiles.length) html += `<h2 class="section-title">Entries</h2>`;
-      html += `<div class="grid">${visEntries.map((e) => entryCard(e, !!q)).join('')}</div>`;
-    }
-    const visCode = visFiles.filter((f) => !isImageFile(f));
-    const visImgs = visFiles.filter((f) => isImageFile(f));
-    if (visCode.length) html += `<h2 class="section-title">Code files</h2><div class="grid">${visCode.map((f) => fileCard(f, !!q)).join('')}</div>`;
-    if (visImgs.length) html += `<h2 class="section-title">Images</h2><div class="grid">${visImgs.map((f) => fileCard(f, !!q)).join('')}</div>`;
     if (visible.length) {
-      /* cards are drawn above */
+      if (showSubCards) html += `<h2 class="section-title">Entries</h2>`;
+      html += `<div class="grid">${visible.map((e) => entryCard(e, !!q)).join('')}</div>`;
     } else if (q) {
-      html += `<div class="empty">Nothing matches “${esc(q)}”.</div>`;
+      html += `<div class="empty">No entries match “${esc(q)}”.</div>`;
     } else if (cur !== null) {
-      html += `<div class="empty">This subfolder is empty. Tap “Upload files” or “Add entry”, or select items in the folder and move them here.</div>`;
+      html += `<div class="empty">This subfolder is empty. Select entries in the folder and move them here, or tap “Add entry”.</div>`;
     }
     $('#out').innerHTML = html;
 
@@ -1110,7 +1096,7 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fope
     });
 
     // entry cards: the whole card opens the entry, or toggles the tick in select mode
-    $('#out').querySelectorAll('.entry:not(.filecard)').forEach((c) => {
+    $('#out').querySelectorAll('.entry').forEach((c) => {
       const e = entries.find((x) => x.id === c.dataset.id);
       if (!e) return;
       const act = () => {
@@ -1160,69 +1146,6 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fope
         };
     });
 
-    // file cards: tick in select mode, otherwise Download and the three-dot menu
-    $('#out').querySelectorAll('.filecard').forEach((c) => {
-      const f = files.find((x) => x.id === c.dataset.fid);
-      if (!f) return;
-      c.tabIndex = 0;
-      c.setAttribute('role', selecting ? 'checkbox' : 'group');
-      if (selecting) c.setAttribute('aria-checked', picked.has(f.id) ? 'true' : 'false');
-      const act = () => {
-        if (picked.has(f.id)) picked.delete(f.id);
-        else picked.add(f.id);
-        c.classList.toggle('picked', picked.has(f.id));
-        syncSel();
-      };
-      c.classList.add('openable');
-      c.onclick = (ev) => {
-        if (selecting) act();
-        else if (!ev.target.closest('button')) openFileViewer(folder, f, draw);
-      };
-      c.onkeydown = (ev) => {
-        if (ev.target === c && (ev.key === 'Enter' || ev.key === ' ')) {
-          ev.preventDefault();
-          if (selecting) act();
-          else openFileViewer(folder, f, draw);
-        }
-      };
-      const op = $('[data-fopen]', c);
-      if (op) op.onclick = () => openFileViewer(folder, f, draw);
-      const dl = $('[data-fdl]', c);
-      if (dl)
-        dl.onclick = async () => {
-          toast('Preparing download…', 0);
-          downloadToast(await downloadFiles([f]), 1);
-        };
-      const dots = $('[data-fdots]', c);
-      if (dots)
-        dots.onclick = (ev) => {
-          ev.stopPropagation();
-          openMenu(ev.currentTarget, [
-            { label: 'Open', icon: I.ext, fn: () => openFileViewer(folder, f, draw) },
-            {
-              label: 'Download',
-              icon: I.download,
-              fn: async () => {
-                toast('Preparing download…', 0);
-                downloadToast(await downloadFiles([f]), 1);
-              },
-            },
-            { label: 'Rename', icon: I.edit, fn: () => renameFile(f) },
-            { label: 'Move to subfolder', icon: I.folder, fn: () => moveFlow([f]) },
-            {
-              label: 'Select',
-              icon: I.check,
-              fn: () => {
-                selecting = true;
-                picked.add(f.id);
-                draw();
-              },
-            },
-            { label: 'Move to Bin', icon: I.trash, danger: true, fn: () => deleteFile(f) },
-          ]);
-        };
-    });
-
     $('#out').querySelectorAll('[data-copy]').forEach((b) => {
       b.onclick = () => copyEntry(entries.find((x) => x.id === b.dataset.copy));
     });
@@ -1240,36 +1163,31 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fope
     else visible.forEach((e) => picked.add(e.id));
     draw();
   };
-  const pickedItems = () => [...entries.filter((e) => picked.has(e.id)), ...files.filter((f) => picked.has(f.id))];
-  $('#selmove').onclick = () => moveFlow(pickedItems());
+  $('#selmove').onclick = () => moveFlow(entries.filter((e) => picked.has(e.id)));
   $('#seldl').onclick = async () => {
-    const es = entries.filter((e) => picked.has(e.id));
-    const fs = files.filter((f) => picked.has(f.id));
-    const total = es.length + fs.length;
-    if (!total) return;
+    const list = entries.filter((e) => picked.has(e.id));
+    if (!list.length) return;
     const btn = $('#seldl');
     btn.disabled = true;
-    toast(total === 1 ? 'Preparing download…' : `Preparing ${total} files…`, 0);
-    const ok = (es.length ? await downloadEntries(es) : 0) + (fs.length ? await downloadFiles(fs) : 0);
-    downloadToast(ok, total);
+    toast(list.length === 1 ? 'Preparing download…' : `Preparing ${list.length} files…`, 0);
+    const ok = await downloadEntries(list);
+    downloadToast(ok, list.length);
     btn.disabled = !picked.size;
   };
-  // Delete: moves every ticked entry and file to the Bin (nothing is lost, the Bin can restore them)
+  // Delete: moves every ticked entry to the Bin (nothing is lost, the Bin can restore them)
   $('#seldel').onclick = async () => {
-    const es = entries.filter((e) => picked.has(e.id));
-    const fs = files.filter((f) => picked.has(f.id));
-    const total = es.length + fs.length;
-    if (!total) return;
+    const list = entries.filter((e) => picked.has(e.id));
+    if (!list.length) return;
     const ok = await modal({
-      title: total === 1 ? 'Move 1 item to the Bin?' : `Move ${total} items to the Bin?`,
+      title: list.length === 1 ? 'Move 1 entry to the Bin?' : `Move ${list.length} entries to the Bin?`,
       text: 'Nothing is deleted yet. You can restore them from the Bin any time.',
       confirm: 'Move to Bin',
     });
     if (!ok) return;
     let n = 0;
     let bad = 0;
-    for (const e of es) {
-      toast(`Moving ${++n} of ${total}…`, 0);
+    for (const e of list) {
+      toast(`Moving ${++n} of ${list.length}…`, 0);
       try {
         await tg.binEntry(folder, e);
         entries.splice(entries.indexOf(e), 1);
@@ -1278,34 +1196,26 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fope
         bad++;
       }
     }
-    for (const f of fs) {
-      toast(`Moving ${++n} of ${total}…`, 0);
-      try {
-        await tg.binFile(folder, f);
-        picked.delete(f.id);
-      } catch (err) {
-        bad++;
-      }
-    }
     folder.count = entries.length;
     if (gone) return;
-    toast(bad ? `Moved ${total - bad} of ${total}. ${bad} could not be moved.` : 'Moved to the Bin');
+    toast(bad ? `Moved ${list.length - bad} of ${list.length}. ${bad} could not be moved.` : 'Moved to the Bin');
     if (!bad) {
       selecting = false;
       picked.clear();
     }
     draw();
   };
-  $('#upfiles').onclick = () => $('#filepick').click();
-  $('#filepick').onchange = (ev) => {
+  $('#upcode').onclick = () => $('#codepick').click();
+  $('#codepick').onchange = (ev) => {
     const picks = [...ev.target.files];
     ev.target.value = '';
-    uploadFiles(picks);
+    importCode(picks);
   };
-  // drag files onto the page (computers)
+  // drag code files onto the page (computers)
   const shell = $('.shell');
+  const hasFiles = (ev) => [...(ev.dataTransfer?.types || [])].includes('Files');
   shell.ondragover = (ev) => {
-    if (![...(ev.dataTransfer?.types || [])].includes('Files')) return;
+    if (!hasFiles(ev)) return;
     ev.preventDefault();
     shell.classList.add('dragging');
   };
@@ -1313,10 +1223,10 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fope
     if (!shell.contains(ev.relatedTarget)) shell.classList.remove('dragging');
   };
   shell.ondrop = (ev) => {
-    if (![...(ev.dataTransfer?.types || [])].includes('Files')) return;
+    if (!hasFiles(ev)) return;
     ev.preventDefault();
     shell.classList.remove('dragging');
-    uploadFiles(ev.dataTransfer.files);
+    importCode(ev.dataTransfer.files);
   };
   $('#newsub').onclick = async () => {
     const name = tg.cleanSub(
@@ -1371,19 +1281,6 @@ async function renderBin() {
     return out.sort((a, b) => b.e.deletedAt - a.e.deletedAt);
   };
 
-  const binFiles = () => {
-    const out = [];
-    for (const f of S.folders) for (const x of tg.binFilesOf(f.id) || []) out.push({ f, x });
-    return out.sort((a, b) => b.x.deletedAt - a.x.deletedAt);
-  };
-
-  const binFileCard = ({ f, x }) => `<div class="card entry bin-card">
-<div class="row"><span class="badge">${esc(extBadge(x.name))}</span><span class="date">Deleted ${fmtDate(x.deletedAt)}</span></div>
-<h3>${esc(x.name)}</h3>
-<div class="meta">${esc(f.name)} · ${fmtSize(x.size)}</div>
-<div class="actions"><button class="btn btn-small" data-act="rx" data-f="${f.id}" data-x="${x.id}">Restore</button>
-<button class="btn btn-light btn-small danger" data-act="dx" data-f="${f.id}" data-x="${x.id}">Delete forever</button></div></div>`;
-
   const binFolderCard = (f) => `<div class="card folder bin-card">
 <div class="row"><span class="ficon">${I.folder}</span><span class="badge">Folder</span></div>
 <div class="info"><h3>${esc(f.name)}</h3><div class="meta">Everything inside it is kept</div></div>
@@ -1402,15 +1299,13 @@ async function renderBin() {
     if (gone || !out) return;
     const folders = tg.getBinFolders();
     const entries = binEntries();
-    const files = binFiles();
-    $('#emptybin').hidden = !(folders.length || entries.length || files.length);
+    $('#emptybin').hidden = !(folders.length || entries.length);
     let html = '';
     if (folders.length) html += `<h2 class="section-title">Folders</h2><div class="grid">${folders.map(binFolderCard).join('')}</div>`;
     if (entries.length) html += `<h2 class="section-title">Entries</h2><div class="grid">${entries.map(binEntryCard).join('')}</div>`;
-    if (files.length) html += `<h2 class="section-title">Files</h2><div class="grid">${files.map(binFileCard).join('')}</div>`;
     if (loading) html += `<div class="loading">${esc(progress)}</div>`;
     else {
-      if (!folders.length && !entries.length && !files.length) html = `<div class="empty">The Bin is empty. Folders, entries and files you delete show up here.</div>`;
+      if (!folders.length && !entries.length) html = `<div class="empty">The Bin is empty. Folders and entries you delete show up here.</div>`;
       if (failed) html += `<div class="empty">Could not check ${plural(failed, 'folder')} for deleted entries. Open the Bin again to retry.</div>`;
     }
     out.innerHTML = html;
@@ -1462,25 +1357,6 @@ async function renderBin() {
       });
     }
 
-    if (act === 'rx' || act === 'dx') {
-      const f = S.folders.find((x) => x.id === b.dataset.f);
-      const x = f && (tg.binFilesOf(f.id) || []).find((y) => y.id === b.dataset.x);
-      if (!x) return;
-      if (act === 'rx')
-        return run(async () => {
-          toast('Restoring file…', 0);
-          await tg.restoreFile(f, x);
-          toast('File restored');
-        });
-      return run(async () => {
-        const ok = await modal({ title: 'Delete this file forever?', text: 'It is removed from your Telegram channel and cannot be recovered.', confirm: 'Delete forever' });
-        if (!ok) return;
-        toast('Deleting…', 0);
-        await tg.deleteFile(f, x);
-        toast('File deleted forever');
-      });
-    }
-
     const f = S.folders.find((x) => x.id === b.dataset.f);
     const e = f && findBinEntry(f.id, b.dataset.e);
     if (!e) return;
@@ -1510,10 +1386,9 @@ async function renderBin() {
     run(async () => {
       const folders = [...tg.getBinFolders()];
       const entries = binEntries();
-      const files = binFiles();
       const typed = await modal({
         title: 'Empty the Bin?',
-        text: `This permanently deletes ${plural(folders.length, 'folder')}, ${plural(entries.length, 'entry').replace('entrys', 'entries')} and ${plural(files.length, 'file')} from Telegram. It cannot be undone. Type “empty” to confirm.`,
+        text: `This permanently deletes ${plural(folders.length, 'folder')} and ${plural(entries.length, 'entry').replace('entrys', 'entries')} from Telegram. It cannot be undone. Type “empty” to confirm.`,
         input: true,
         placeholder: 'empty',
         confirm: 'Delete forever',
@@ -1522,15 +1397,7 @@ async function renderBin() {
       if (typed.toLowerCase() !== 'empty') return toast('Nothing was deleted.');
       let bad = 0;
       let n = 0;
-      const total = folders.length + entries.length + files.length;
-      for (const { f, x } of files) {
-        toast(`Deleting ${++n} of ${total}…`, 0);
-        try {
-          await tg.deleteFile(f, x);
-        } catch (err) {
-          bad++;
-        }
-      }
+      const total = folders.length + entries.length;
       for (const { f, e } of entries) {
         toast(`Deleting ${++n} of ${total}…`, 0);
         try {
@@ -1685,128 +1552,6 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
 }
 
 
-/* ---------- open an uploaded file (full screen) ---------- */
-
-const CODE_EXT = /\.(c|h|cpp|hpp|cc|cxx|java|py|js|jsx|ts|tsx|html|css|sql|cs|go|rs|php|kt|swift|rb|sh|bat|asm|json|xml|yml|yaml|txt|md|csv)$/i;
-const IMG_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
-const isImageFile = (f) => (f.type || f.mime || '').toLowerCase().startsWith('image/') || IMG_EXT.test(f.name);
-// Uploads are limited to code files and pictures (no PDFs or other documents).
-const canUpload = (f) => CODE_EXT.test(f.name) || isImageFile(f);
-const CODE_ACCEPT = '.c,.h,.cpp,.hpp,.cc,.java,.py,.js,.jsx,.ts,.tsx,.html,.css,.sql,.cs,.go,.rs,.php,.kt,.swift,.rb,.sh,.bat,.asm,.json,.xml,.yml,.yaml,.txt,.md,.csv';
-const UPLOAD_ACCEPT = '.c,.h,.cpp,.hpp,.cc,.java,.py,.js,.jsx,.ts,.tsx,.html,.css,.sql,.cs,.go,.rs,.php,.kt,.swift,.rb,.sh,.bat,.asm,.json,.xml,.yml,.yaml,.txt,.md,.csv,image/*';
-
-function fileKind(f) {
-  if (isImageFile(f)) return 'image';
-  if (CODE_EXT.test(f.name) && f.size <= 2 * 1024 * 1024) return 'text';
-  return 'other';
-}
-
-// Which highlighter language fits a text file, by its extension.
-function langOfFile(name) {
-  const ext = (name.split('.').pop() || '').toLowerCase();
-  if (ext === 'c' || ext === 'h') return 'C';
-  if (['cpp', 'hpp', 'cc', 'cxx'].includes(ext)) return 'C++';
-  if (ext === 'java') return 'Java';
-  if (ext === 'py') return 'Python';
-  if (ext === 'js' || ext === 'ts') return 'JavaScript';
-  if (ext === 'sql') return 'SQL';
-  if (ext === 'html' || ext === 'css') return 'HTML/CSS';
-  return 'Other';
-}
-
-// Opens an uploaded file full screen. Text and code files use the same look as the code viewer
-// (line numbers, colours, A-/A+, Copy all code). onChange() is called after the file is deleted.
-async function openFileViewer(folder, f, onChange) {
-  document.querySelectorAll('.viewer').forEach((x) => x.remove());
-  const kind = fileKind(f);
-  const isText = kind === 'text';
-  const lang = langOfFile(f.name);
-  const v = document.createElement('div');
-  v.className = 'viewer';
-  v.innerHTML = `<div class="v-head"><span class="ficon">${I.folder}</span>
-<div class="v-title"><b>${esc(f.name)}</b><small>${esc(folder.name)}${f.sub ? ' · ' + esc(f.sub) : ''} · ${fmtSize(f.size)} · ${fmtDate(f.ts)}</small></div>
-<span class="v-lang">${esc(isText && lang !== 'Other' ? BADGE[lang] : extBadge(f.name))}</span>
-<div class="v-btns">
-${isText ? `<button class="vbtn sq" data-minus aria-label="Smaller text">A−</button>
-<button class="vbtn sq" data-plus aria-label="Bigger text">A+</button>
-<button class="vbtn primary grow" data-copyall>${I.copy}<span>Copy all code</span></button>` : ''}
-<button class="vbtn sq" data-dl aria-label="Download file">${I.download}</button>
-<button class="vbtn sq" data-del aria-label="Move file to the Bin" title="Move to the Bin">${I.trash}</button>
-<button class="vbtn sq" data-close aria-label="Close">${I.x}</button></div></div>
-<div class="v-body">${
-    isText
-      ? '<div class="v-code" id="vcode"><div class="loading" style="color:#a8bbd0">Loading file…</div></div>'
-      : '<div class="v-file" id="vfile"><div class="loading" style="color:#a8bbd0">Loading file…</div></div>'
-  }</div>`;
-  document.body.appendChild(v);
-  document.body.style.overflow = 'hidden';
-
-  let url = null;
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    document.removeEventListener('keydown', onKey);
-    document.body.style.overflow = '';
-    if (url) URL.revokeObjectURL(url);
-    v.remove();
-  };
-  const onKey = (e) => e.key === 'Escape' && close();
-  document.addEventListener('keydown', onKey);
-  v.cleanup = close; // the router calls this when you go to another page
-  $('[data-close]', v).onclick = close;
-  $('[data-dl]', v).onclick = async () => {
-    toast('Preparing download…', 0);
-    downloadToast(await downloadFiles([f]), 1);
-  };
-  $('[data-del]', v).onclick = async () => {
-    const ok = await modal({ title: 'Move this file to the Bin?', text: 'You can restore it from the Bin any time.', confirm: 'Move to Bin' });
-    if (!ok) return;
-    try {
-      toast('Moving to the Bin…', 0);
-      await tg.binFile(folder, f);
-      toast('Moved to the Bin');
-      close();
-      onChange?.();
-    } catch (err) {
-      toast(tg.friendlyError(err));
-    }
-  };
-
-  const box = $(isText ? '#vcode' : '#vfile', v);
-  if (kind === 'other') {
-    box.innerHTML = `<div class="v-nopreview"><b>${esc(f.name)}</b><p>This file is too big to show here. Download it to open it on your device.</p></div>`;
-    return;
-  }
-  try {
-    const buf = await tg.getFileData(f);
-    if (closed) return;
-    if (isText) {
-      const text = new TextDecoder().decode(buf).replace(/\r\n/g, '\n');
-      let size = Number(localStorage.getItem('cv_code_size')) || 15;
-      const applySize = () => {
-        v.style.setProperty('--code-size', size + 'px');
-        localStorage.setItem('cv_code_size', String(size));
-      };
-      applySize();
-      $('[data-minus]', v).onclick = () => ((size = Math.max(10, size - 1)), applySize());
-      $('[data-plus]', v).onclick = () => ((size = Math.min(30, size + 1)), applySize());
-      $('[data-copyall]', v).onclick = async () => {
-        const ok = await copyText(text);
-        toast(ok ? 'All code copied' : 'Could not copy. Press and hold on the text to select it.');
-      };
-      box.innerHTML = highlightLines(text, lang)
-        .map((html, n) => `<div class="ln"><span class="no">${n + 1}</span><span class="tx">${html || ' '}</span></div>`)
-        .join('');
-      return;
-    }
-    url = URL.createObjectURL(new Blob([buf], { type: f.mime || 'image/jpeg' }));
-    box.innerHTML = `<img class="v-img" alt="${esc(f.name)}" src="${url}" />`;
-  } catch (err) {
-    if (!closed) box.innerHTML = `<div class="v-nopreview"><b>Could not load this file.</b><p>${esc(tg.friendlyError(err))}</p></div>`;
-  }
-}
-
 /* ---------- subfolder select used by the New and Edit forms ---------- */
 
 /* ---------- several solutions in the New and Edit forms ---------- */
@@ -1817,52 +1562,17 @@ const SOLUTION_BOX_HTML = (placeholder = '') =>
 
 // One code box that switches between "Solution 1", "Solution 2" ... Returns { get() }, which gives
 // the non-empty solutions joined into the single string that is saved.
-function bindSolutions(initial, { onImport } = {}) {
+function bindSolutions(initial) {
   const sols = initial.slice();
   let cur = 0;
   const ta = $('#c');
   const bar = $('#solbar');
   ta.value = sols[0];
 
-  // "Upload code files": every picked code file becomes one solution of this question.
-  const picker = document.createElement('input');
-  picker.type = 'file';
-  picker.multiple = true;
-  picker.accept = CODE_ACCEPT;
-  picker.onchange = async () => {
-    const list = [...picker.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-    picker.value = '';
-    const got = [];
-    let skipped = 0;
-    for (const f of list) {
-      if (!CODE_EXT.test(f.name) || f.size > 1024 * 1024 || !f.size) {
-        skipped++;
-        continue;
-      }
-      got.push({ name: f.name, text: (await f.text()).replace(/\r\n/g, '\n') });
-    }
-    if (!got.length) return toast('Pick code files up to 1 MB each (.c, .cpp, .java, .py, .js and similar).');
-    sols[cur] = ta.value;
-    let first = cur;
-    got.forEach((g, i) => {
-      if (i === 0 && !sols[cur].trim()) sols[cur] = g.text; // fill the empty box first
-      else {
-        sols.push(g.text);
-        if (i === 0) first = sols.length - 1;
-      }
-    });
-    cur = first;
-    ta.value = sols[cur];
-    draw();
-    onImport?.(got);
-    toast(`${got.length === 1 ? 'Added 1 solution' : `Added ${got.length} solutions`}${skipped ? `. ${plural(skipped, 'file')} skipped.` : ''}`);
-  };
-
   const draw = () => {
     bar.innerHTML =
       sols.map((_, i) => `<button type="button" class="sol-tab${i === cur ? ' on' : ''}" data-i="${i}">Solution ${i + 1}</button>`).join('') +
       '<button type="button" class="sol-add" data-add>+ Add solution</button>' +
-      '<button type="button" class="sol-add" data-upload>Upload code files</button>' +
       (sols.length > 1 ? `<button type="button" class="sol-rm" data-rm>Remove solution ${cur + 1}</button>` : '');
     bar.querySelectorAll('[data-i]').forEach((b) => {
       b.onclick = () => {
@@ -1872,7 +1582,6 @@ function bindSolutions(initial, { onImport } = {}) {
         draw();
       };
     });
-    $('[data-upload]', bar).onclick = () => picker.click();
     $('[data-add]', bar).onclick = () => {
       sols[cur] = ta.value;
       sols.push('');
@@ -1975,7 +1684,7 @@ async function renderNew(fid) {
 <button type="button" class="btn btn-light btn-small" id="browse">Browse files</button>
 <input type="file" id="file" accept="image/*" multiple hidden /></div>
 <div class="thumbs" id="thumbs"></div></div>
-<div class="block"><label class="lbl" for="c">Code <span>(more than one answer? use + Add solution, or Upload code files)</span></label>
+<div class="block"><label class="lbl" for="c">Code <span>(have more than one answer? use + Add solution)</span></label>
 ${SOLUTION_BOX_HTML('Paste your code here. Indentation is kept exactly as you paste it.')}</div>
 <div class="form-foot"><small>Saving sends the code and your screenshots to the channel as one entry.</small>
 <div class="btns"><a class="btn btn-light" href="#/f/${fid}">Cancel</a><button class="btn" id="save">${I.check}Save to Telegram</button></div></div>
@@ -2006,14 +1715,7 @@ ${SOLUTION_BOX_HTML('Paste your code here. Indentation is kept exactly as you pa
     drawThumbs();
   };
 
-  const solutions = bindSolutions([''], {
-    // the first file names the entry and sets the language, if you have not typed them yet
-    onImport: (got) => {
-      if (!$('#t').value.trim()) $('#t').value = got[0].name.replace(/\.[^.]+$/, '').slice(0, 120);
-      const l = langOfFile(got[0].name);
-      if (l !== 'Other') $('#l').value = l;
-    },
-  });
+  const solutions = bindSolutions(['']);
   bindSubSelect($('#sf'));
   $('#browse').onclick = () => $('#file').click();
   $('#file').onchange = (e) => {
