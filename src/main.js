@@ -1692,6 +1692,7 @@ const IMG_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 const isImageFile = (f) => (f.type || f.mime || '').toLowerCase().startsWith('image/') || IMG_EXT.test(f.name);
 // Uploads are limited to code files and pictures (no PDFs or other documents).
 const canUpload = (f) => CODE_EXT.test(f.name) || isImageFile(f);
+const CODE_ACCEPT = '.c,.h,.cpp,.hpp,.cc,.java,.py,.js,.jsx,.ts,.tsx,.html,.css,.sql,.cs,.go,.rs,.php,.kt,.swift,.rb,.sh,.bat,.asm,.json,.xml,.yml,.yaml,.txt,.md,.csv';
 const UPLOAD_ACCEPT = '.c,.h,.cpp,.hpp,.cc,.java,.py,.js,.jsx,.ts,.tsx,.html,.css,.sql,.cs,.go,.rs,.php,.kt,.swift,.rb,.sh,.bat,.asm,.json,.xml,.yml,.yaml,.txt,.md,.csv,image/*';
 
 function fileKind(f) {
@@ -1816,17 +1817,52 @@ const SOLUTION_BOX_HTML = (placeholder = '') =>
 
 // One code box that switches between "Solution 1", "Solution 2" ... Returns { get() }, which gives
 // the non-empty solutions joined into the single string that is saved.
-function bindSolutions(initial) {
+function bindSolutions(initial, { onImport } = {}) {
   const sols = initial.slice();
   let cur = 0;
   const ta = $('#c');
   const bar = $('#solbar');
   ta.value = sols[0];
 
+  // "Upload code files": every picked code file becomes one solution of this question.
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.multiple = true;
+  picker.accept = CODE_ACCEPT;
+  picker.onchange = async () => {
+    const list = [...picker.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    picker.value = '';
+    const got = [];
+    let skipped = 0;
+    for (const f of list) {
+      if (!CODE_EXT.test(f.name) || f.size > 1024 * 1024 || !f.size) {
+        skipped++;
+        continue;
+      }
+      got.push({ name: f.name, text: (await f.text()).replace(/\r\n/g, '\n') });
+    }
+    if (!got.length) return toast('Pick code files up to 1 MB each (.c, .cpp, .java, .py, .js and similar).');
+    sols[cur] = ta.value;
+    let first = cur;
+    got.forEach((g, i) => {
+      if (i === 0 && !sols[cur].trim()) sols[cur] = g.text; // fill the empty box first
+      else {
+        sols.push(g.text);
+        if (i === 0) first = sols.length - 1;
+      }
+    });
+    cur = first;
+    ta.value = sols[cur];
+    draw();
+    onImport?.(got);
+    toast(`${got.length === 1 ? 'Added 1 solution' : `Added ${got.length} solutions`}${skipped ? `. ${plural(skipped, 'file')} skipped.` : ''}`);
+  };
+
   const draw = () => {
     bar.innerHTML =
       sols.map((_, i) => `<button type="button" class="sol-tab${i === cur ? ' on' : ''}" data-i="${i}">Solution ${i + 1}</button>`).join('') +
       '<button type="button" class="sol-add" data-add>+ Add solution</button>' +
+      '<button type="button" class="sol-add" data-upload>Upload code files</button>' +
       (sols.length > 1 ? `<button type="button" class="sol-rm" data-rm>Remove solution ${cur + 1}</button>` : '');
     bar.querySelectorAll('[data-i]').forEach((b) => {
       b.onclick = () => {
@@ -1836,6 +1872,7 @@ function bindSolutions(initial) {
         draw();
       };
     });
+    $('[data-upload]', bar).onclick = () => picker.click();
     $('[data-add]', bar).onclick = () => {
       sols[cur] = ta.value;
       sols.push('');
@@ -1938,7 +1975,7 @@ async function renderNew(fid) {
 <button type="button" class="btn btn-light btn-small" id="browse">Browse files</button>
 <input type="file" id="file" accept="image/*" multiple hidden /></div>
 <div class="thumbs" id="thumbs"></div></div>
-<div class="block"><label class="lbl" for="c">Code <span>(have more than one answer? use + Add solution)</span></label>
+<div class="block"><label class="lbl" for="c">Code <span>(more than one answer? use + Add solution, or Upload code files)</span></label>
 ${SOLUTION_BOX_HTML('Paste your code here. Indentation is kept exactly as you paste it.')}</div>
 <div class="form-foot"><small>Saving sends the code and your screenshots to the channel as one entry.</small>
 <div class="btns"><a class="btn btn-light" href="#/f/${fid}">Cancel</a><button class="btn" id="save">${I.check}Save to Telegram</button></div></div>
@@ -1969,7 +2006,14 @@ ${SOLUTION_BOX_HTML('Paste your code here. Indentation is kept exactly as you pa
     drawThumbs();
   };
 
-  const solutions = bindSolutions(['']);
+  const solutions = bindSolutions([''], {
+    // the first file names the entry and sets the language, if you have not typed them yet
+    onImport: (got) => {
+      if (!$('#t').value.trim()) $('#t').value = got[0].name.replace(/\.[^.]+$/, '').slice(0, 120);
+      const l = langOfFile(got[0].name);
+      if (l !== 'Other') $('#l').value = l;
+    },
+  });
   bindSubSelect($('#sf'));
   $('#browse').onclick = () => $('#file').click();
   $('#file').onchange = (e) => {
