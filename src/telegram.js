@@ -34,6 +34,9 @@ const TAGS = {
   binCode: ['#tcbin '],
   binQuestion: ['#tcqbin '],
   binImage: ['#tcibin '],
+  // Uploaded files (any type). Same idea: the Bin only changes the tag.
+  file: ['#tcf '],
+  binFile: ['#tcfbin '],
 };
 
 // A deleted folder is the same channel with a new title. It no longer starts with "TC · ", so it
@@ -386,6 +389,8 @@ export async function signOut() {
   memKeys = null; // the keys are erased too: sign-in starts empty next time
   wipePlainKeys();
   binCache.clear();
+  fileCache.clear();
+  binFileCache.clear();
   binFolderList = [];
   client = null;
 }
@@ -519,6 +524,16 @@ function belongs(m, id, kind) {
       }
     }
   }
+  if ((kind === 'file' || kind === 'any') && m.document) {
+    const j = afterTag(text, 'file');
+    if (j !== null) {
+      try {
+        if (JSON.parse(j).id === id) return true;
+      } catch (e) {
+        /* not ours */
+      }
+    }
+  }
   if (kind === 'question' || kind === 'any') {
     const r = afterTag(text, 'question');
     if (r !== null && r.split('\n')[0].trim() === id) return true;
@@ -584,6 +599,13 @@ async function countFor(folder) {
     );
     const inBin = b.total ?? b.length ?? 0;
     if (inBin > 0 && inBin <= total) total -= inBin;
+    // uploaded files (and the ones in the Bin) are documents too, but they are not entries
+    const f = await reliable(
+      () => client.getMessages(folder.entity, { limit: 1, search: '#tcf', filter: new Api.InputMessagesFilterDocument() }),
+      { ms: 60000 }
+    );
+    const nFiles = f.total ?? f.length ?? 0;
+    if (nFiles > 0 && nFiles <= total) total -= nFiles;
   } catch (e) {
     /* keep the plain count */
   }
@@ -781,11 +803,54 @@ function assemble(msgs, kinds, binned) {
   return [...entries.values()];
 }
 
+// Uploaded files of one folder, kept in memory like the entries (filled by loadEntries).
+// The arrays are changed in place, so a screen that holds one always sees the latest list.
+const fileCache = new Map();
+const binFileCache = new Map();
+
+/** The folder's files (newest first). Always an array. */
+export function filesOf(fid) {
+  const k = String(fid);
+  if (!fileCache.has(k)) fileCache.set(k, []);
+  return fileCache.get(k);
+}
+/** The folder's files in the Bin (null when the folder has not been loaded yet). */
+export const binFilesOf = (fid) => binFileCache.get(String(fid)) || null;
+
+function assembleFiles(msgs, kind, binned) {
+  const out = [];
+  for (const m of msgs) {
+    if (!m.document) continue;
+    const body = afterTag(m.message || '', kind);
+    if (body === null) continue;
+    try {
+      const meta = JSON.parse(body);
+      if (!meta || !meta.id) continue;
+      out.push({
+        isFile: true,
+        id: meta.id,
+        name: meta.n || 'file',
+        size: Number(meta.z) || Number(m.document.size) || 0,
+        mime: meta.m || m.document.mimeType || '',
+        sub: cleanSub(meta.d),
+        ts: meta.ts || m.date * 1000,
+        deletedAt: binned ? meta.x || m.date * 1000 : 0,
+        msg: m,
+      });
+    } catch (e) {
+      /* not one of ours */
+    }
+  }
+  return out;
+}
+
 export async function loadEntries(folder) {
   const msgs = await reliable(() => client.getMessages(folder.entity, { limit: MAX_MESSAGES }), { ms: 300 * 1000 });
   const list = assemble(msgs, KINDS, false).sort((a, b) => b.ts - a.ts);
   // the same messages also hold the folder's Bin, so it costs no extra requests
   binCache.set(String(folder.id), assemble(msgs, BIN_KINDS, true).sort((a, b) => b.deletedAt - a.deletedAt));
+  fileCache.set(String(folder.id), assembleFiles(msgs, 'file', false).sort((a, b) => b.ts - a.ts));
+  binFileCache.set(String(folder.id), assembleFiles(msgs, 'binFile', true).sort((a, b) => b.deletedAt - a.deletedAt));
   folder.count = list.length;
   folder.last = list[0] ? list[0].ts : folder.last;
   return list;
@@ -835,6 +900,7 @@ export function removeLocalSub(fid, name) {
 export function listSubs(fid, entries) {
   const seen = new Map();
   for (const e of entries || []) if (e.sub) seen.set(e.sub.toLowerCase(), e.sub);
+  for (const f of filesOf(fid)) if (f.sub && !seen.has(f.sub.toLowerCase())) seen.set(f.sub.toLowerCase(), f.sub);
   for (const n of readLocalSubs(fid)) if (!seen.has(n.toLowerCase())) seen.set(n.toLowerCase(), n);
   return [...seen.values()].sort((a, b) => a.localeCompare(b));
 }
@@ -865,7 +931,10 @@ export async function moveEntries(folder, entries, sub, onProgress) {
   let done = 0;
   for (const entry of entries) {
     if (entry.sub !== target) {
-      await reliable(() => safeEdit(folder.entity, { message: entry.codeMsg.id, text: metaOf(entry, target) }));
+      // entries and uploaded files can be mixed in one list
+      const msgId = entry.isFile ? entry.msg.id : entry.codeMsg.id;
+      const text = entry.isFile ? fileMeta(entry, target) : metaOf(entry, target);
+      await reliable(() => safeEdit(folder.entity, { message: msgId, text }));
       entry.sub = target;
     }
     done++;
@@ -1176,6 +1245,124 @@ export async function editEntry(folder, entry, { title, question, lang, tags, co
     err.partial = true;
     throw err;
   }
+}
+
+/* ---------- uploaded files ---------- */
+
+/** Biggest file Telecloud uploads (the whole file is read into memory first). */
+export const MAX_UPLOAD = 100 * 1024 * 1024;
+
+// The #tcf caption of an uploaded file. `tag` and `extra` are only used for the Bin.
+function fileMeta(f, sub, tag = TAGS.file[0], extra = {}) {
+  const meta = { id: f.id, n: f.name.slice(0, 150), z: f.size, m: (f.mime || '').slice(0, 80), ts: f.ts };
+  const d = cleanSub(sub);
+  if (d) meta.d = d;
+  return tag + JSON.stringify({ ...meta, ...extra });
+}
+
+const uploadMs = (size) => Math.max(UPLOAD_TIMEOUT, 60000 + size / 50); // allows about 50 KB/s
+
+/**
+ * Uploads one file into a folder (and a subfolder, "" = none). Returns the new file item, already
+ * added to the folder's list. onStatus(text) and onProgress(0..1) are optional.
+ */
+export async function addFile(folder, file, sub, { onStatus, onProgress } = {}) {
+  if (!file.size) throw new Error('This file is empty, so Telegram cannot store it.');
+  if (file.size > MAX_UPLOAD) throw new Error('This file is bigger than 100 MB.');
+  const ent = folder.entity;
+  const item = {
+    isFile: true,
+    id: rid(),
+    name: (file.name || 'file').replace(/[\\/]/g, '_').slice(0, 150),
+    size: file.size,
+    mime: file.type || '',
+    sub: cleanSub(sub),
+    ts: Date.now(),
+    deletedAt: 0,
+    msg: null,
+  };
+  const buf = Buffer.from(await file.arrayBuffer());
+  const caption = fileMeta(item, item.sub);
+  let sent;
+  try {
+    sent = await reliable(
+      () =>
+        client.sendFile(ent, {
+          file: new CustomFile(item.name, buf.length, '', buf),
+          caption,
+          forceDocument: true,
+          progressCallback: (p) => onProgress?.(Number(p) || 0),
+        }),
+      { ms: uploadMs(file.size), onStatus, alreadyDone: () => findRecent(ent, item.id, 'file') }
+    );
+  } catch (e) {
+    try {
+      await ensureConnected();
+      const left = await withTimeout(findRecent(ent, item.id, 'file'), 20000);
+      if (left) await removeMessages(ent, idsOf(left));
+    } catch (e2) {
+      console.warn('could not check for leftovers', e2);
+    }
+    throw e;
+  }
+  item.msg = asList(sent)[0];
+  filesOf(folder.id).unshift(item);
+  if (item.sub) addLocalSub(folder.id, item.sub);
+  return item;
+}
+
+/** Downloads the bytes of an uploaded file. */
+export async function getFileData(f) {
+  return reliable(() => client.downloadMedia(f.msg, {}), { ms: uploadMs(f.size) });
+}
+
+/** Changes the name shown in Telecloud (only the caption changes, not the file in Telegram). */
+export async function renameFile(folder, f, name) {
+  const clean = String(name || '').trim().replace(/[\\/]/g, '_').slice(0, 150);
+  if (!clean) throw new Error('Please type a file name.');
+  const next = { ...f, name: clean };
+  const text = fileMeta(next, f.sub);
+  await reliable(() => safeEdit(folder.entity, { message: f.msg.id, text }));
+  f.name = clean;
+  f.msg.message = text;
+}
+
+function dropFrom(map, fid, f) {
+  const list = map.get(String(fid));
+  if (!list) return;
+  const i = list.indexOf(f);
+  if (i > -1) list.splice(i, 1);
+}
+
+/** "Delete" a file: it moves to the Bin and can be restored. */
+export async function binFile(folder, f) {
+  const text = fileMeta(f, f.sub, TAGS.binFile[0], { x: Date.now() });
+  await reliable(() => safeEdit(folder.entity, { message: f.msg.id, text }));
+  f.msg.message = text;
+  f.deletedAt = Date.now();
+  dropFrom(fileCache, folder.id, f);
+  const key = String(folder.id);
+  binFileCache.set(key, [f, ...(binFileCache.get(key) || []).filter((x) => x.id !== f.id)]);
+}
+
+/** Brings a file back out of the Bin. */
+export async function restoreFile(folder, f) {
+  const text = fileMeta(f, f.sub);
+  await reliable(() => safeEdit(folder.entity, { message: f.msg.id, text }));
+  f.msg.message = text;
+  f.deletedAt = 0;
+  const key = String(folder.id);
+  if (binFileCache.has(key)) binFileCache.set(key, binFileCache.get(key).filter((x) => x.id !== f.id));
+  const list = filesOf(folder.id);
+  if (!list.includes(f)) list.push(f);
+  list.sort((a, b) => b.ts - a.ts);
+}
+
+/** PERMANENT. Deletes an uploaded file from Telegram. Use only from the Bin. */
+export async function deleteFile(folder, f) {
+  await reliable(() => client.deleteMessages(folder.entity, [f.msg.id], { revoke: true }));
+  const key = String(folder.id);
+  if (binFileCache.has(key)) binFileCache.set(key, binFileCache.get(key).filter((x) => x.id !== f.id));
 }
 
 export function friendlyError(e) {
