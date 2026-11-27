@@ -52,6 +52,8 @@
 *   **☁️ Free Storage in Your Own Telegram**: Every folder is a private Telegram channel in your account. Your code lives in Telegram, so there is no extra server, database or bill.
 *   **📂 Folders and Subfolders**: Create one folder for each course, such as "C Programming" or "Data Structures", and split it into subfolders (for example "Lab 1", "Lab 2"). Open a folder to see its entries, newest first.
 *   **📝 Rich Entries**: Save the code together with a title, language, tags, the original question text and screenshots. The date and time are added automatically.
+*   **📤 Upload Any File**: Upload PDFs, images, documents or zip files (up to 100 MB each) into a folder or a subfolder, from the **Upload files** button or by dragging them onto the page on a computer. Download, rename, move or delete them like entries.
+*   **☑️ Select and Delete**: Press **Select**, tick entries and files, then **Download**, **Move** or **Delete** them all at once. Delete moves them to the Bin, so nothing is lost by mistake.
 *   **🧩 Several Solutions per Entry**: One question can hold more than one solution. Each solution has its own copy button, and each one downloads as its own file.
 *   **🔍 Search**: Search folder names, and entry titles, questions and tags across all your folders. Inside an open folder the search also looks through the code itself.
 *   **⬇️ Download as Files**: Download one entry, or tick several entries and download them all. Each file is named after the entry title with the right extension, for example `Prime check.c` for a C entry, and the question (if any) is added at the top as a comment.
@@ -91,6 +93,7 @@
 | **Several solutions** | Stored inside the one code file, separated by a marker line |
 | **Entry (question)** | An optional text message tagged `#tcq` with the question |
 | **Entry (screenshots)** | An optional photo or album tagged `#tci` |
+| **Uploaded file** | A document message with a `#tcf` caption that stores the name, size, subfolder and time |
 
 When you open a folder, Telecloud reads the messages inside that channel and rebuilds its entries from them. Each folder's entries are loaded once and kept in memory while the app is open, so going back to a folder you already opened is instant.
 
@@ -107,6 +110,7 @@ Nothing is deleted right away. When you press **Move to the Bin** on a folder or
 | :--- | :--- |
 | **Folder** | The channel is renamed from `TC · name` to `TC bin · name`. All its entries stay inside. |
 | **Entry** | The tags in its captions change (`#tc` to `#tcbin`, `#tcq` to `#tcqbin`, `#tci` to `#tcibin`). The code, question and screenshots stay in the channel. |
+| **Uploaded file** | The tag in its caption changes from `#tcf` to `#tcfbin`. The file stays in the channel. |
 
 Open the Bin with the **Bin** button on the home page. For each item you can:
 *   **Restore**: puts it back exactly as it was (same subfolder, tags, date and screenshots).
@@ -127,6 +131,7 @@ Open the Bin with the **Bin** button on the home page. For each item you can:
 *   **Login session**: Saved in this browser's `localStorage` only, and **encrypted with your 6-digit PIN** (AES-GCM, key made with PBKDF2), together with the API keys. Each browser or device signs in on its own.
 *   **PIN lock**: After your first sign-in you create a 6-digit PIN. Telecloud creates a private channel called **Private PIN for Tele Cloud** in your own Telegram (once) and saves a scrambled hash of the PIN there, never the PIN itself. On a new device you sign in with your login code and then enter the same PIN, so you create it only once. Every time you open the app on a device, it asks for the PIN first and checks it on the device. Do not delete or edit that channel.
 *   **Wrong PINs**: After 3 wrong PINs you must wait (30 seconds, doubling each time, up to 1 hour). After 10 wrong PINs the saved login is deleted and you are signed out.
+*   **Uploaded files**: Sent as they are (no shrinking), up to **100 MB** each, because the whole file is read into memory before it is sent. Empty files cannot be stored.
 *   **Screenshots**: Shrunk to at most 1600 px and sent as JPEG before upload.
 *   **Questions**: Text longer than about 3,900 characters is cut.
 
@@ -169,9 +174,18 @@ Telecloud needs your own API credentials to connect to Telegram. This is free an
 *   Press **New subfolder** inside a folder to make one, then choose it when you add or edit an entry.
 *   Press **Select** to tick several entries. You can then **Download** them together or **Move** them into a subfolder (or out of one). Moving only changes the entry's caption, so the code, question and screenshots are not touched.
 
+### Uploading Files
+1. Open a folder (or a subfolder) and press **Upload files**, or drag files onto the page on a computer.
+2. The files are saved in the folder you are looking at. If you are inside a subfolder, they go into that subfolder.
+3. Each file card has **Download**, and a menu with **Rename**, **Move to subfolder**, **Select** and **Move to Bin**.
+
+### Deleting Several at Once
+1. Press **Select** and tick entries and files (or press **Select all**).
+2. Press **Delete** and confirm. They move to the Bin, where you can restore them or delete them forever.
+
 ### Searching
 *   **On the home page**: finds folders by name, and entries by title, question or tag, across all your folders. The first search may take a moment because each folder's entries are loaded once.
-*   **Inside a folder**: also searches the code itself.
+*   **Inside a folder**: also searches the code itself and the names of uploaded files.
 
 ### Install as an App
 Open the browser menu and choose **Install app** or **Add to Home screen**. Telecloud then opens in its own window.
