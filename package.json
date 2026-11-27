@@ -1,7 +1,7 @@
 {
   "name": "telecloud",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.4.1.0",
   "type": "module",
   "scripts": { "dev": "vite", "build": "vite build", "preview": "vite preview" },
   "dependencies": { "telegram": "^2.26.0" },
