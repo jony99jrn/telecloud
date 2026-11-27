@@ -1024,7 +1024,8 @@ ${e.solutions > 1 ? '' : `<button class="btn btn-small" data-copy="${e.id}">${I.
 ${selecting ? `<span class="chk" aria-hidden="true">${I.check}</span>` : `<button type="button" class="dots" data-fdots="${f.id}" aria-label="More options">${I.dots}</button>`}</div>
 <h3>${esc(f.name)}</h3>
 <div class="meta">${fmtSize(f.size)}${showSub && f.sub ? ` · <span class="subchip">${I.folder}${esc(f.sub)}</span>` : ''}</div>
-${selecting ? '' : `<div class="actions"><button class="btn btn-light btn-small" data-fdl="${f.id}">${I.download}Download</button></div>`}</div>`;
+${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fopen="${f.id}">${I.ext}Open</button>
+<button class="btn btn-light btn-small" data-fdl="${f.id}">${I.download}Download</button></div>`}</div>`;
 
   function draw() {
     closeMenu();
@@ -1171,15 +1172,20 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-light btn-small"
         c.classList.toggle('picked', picked.has(f.id));
         syncSel();
       };
+      c.classList.add('openable');
       c.onclick = (ev) => {
         if (selecting) act();
+        else if (!ev.target.closest('button')) openFileViewer(folder, f);
       };
       c.onkeydown = (ev) => {
-        if (selecting && ev.target === c && (ev.key === 'Enter' || ev.key === ' ')) {
+        if (ev.target === c && (ev.key === 'Enter' || ev.key === ' ')) {
           ev.preventDefault();
-          act();
+          if (selecting) act();
+          else openFileViewer(folder, f);
         }
       };
+      const op = $('[data-fopen]', c);
+      if (op) op.onclick = () => openFileViewer(folder, f);
       const dl = $('[data-fdl]', c);
       if (dl)
         dl.onclick = async () => {
@@ -1191,6 +1197,7 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-light btn-small"
         dots.onclick = (ev) => {
           ev.stopPropagation();
           openMenu(ev.currentTarget, [
+            { label: 'Open', icon: I.ext, fn: () => openFileViewer(folder, f) },
             {
               label: 'Download',
               icon: I.download,
@@ -1676,6 +1683,76 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
   }
 }
 
+
+/* ---------- open an uploaded file (full screen) ---------- */
+
+const TEXT_EXT = /\.(txt|md|csv|json|xml|log|c|h|cpp|hpp|java|py|js|ts|html|css|sql|sh|yml|yaml|ini|cfg|bat)$/i;
+function fileKind(f) {
+  const m = (f.mime || '').toLowerCase();
+  const n = f.name.toLowerCase();
+  if (m.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(n)) return 'image';
+  if (m === 'application/pdf' || n.endsWith('.pdf')) return 'pdf';
+  if (m.startsWith('video/') || /\.(mp4|webm|mov|mkv)$/.test(n)) return 'video';
+  if (m.startsWith('audio/') || /\.(mp3|wav|ogg|m4a)$/.test(n)) return 'audio';
+  if ((m.startsWith('text/') || TEXT_EXT.test(n)) && f.size <= 2 * 1024 * 1024) return 'text';
+  return 'other';
+}
+
+async function openFileViewer(folder, f) {
+  document.querySelectorAll('.viewer').forEach((x) => x.remove());
+  const v = document.createElement('div');
+  v.className = 'viewer';
+  v.innerHTML = `<div class="v-head"><span class="ficon">${I.folder}</span>
+<div class="v-title"><b>${esc(f.name)}</b><small>${esc(folder.name)}${f.sub ? ' / ' + esc(f.sub) : ''} · ${fmtSize(f.size)} · ${fmtDate(f.ts)}</small></div>
+<div class="v-btns"><button class="vbtn primary" data-dl>${I.download}<span>Download</span></button>
+<button class="vbtn sq" data-close aria-label="Close">${I.x}</button></div></div>
+<div class="v-body"><div class="v-file" id="vfile"><div class="loading" style="color:#a8bbd0">Loading file…</div></div></div>`;
+  document.body.appendChild(v);
+  document.body.style.overflow = 'hidden';
+  let url = null;
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKey);
+    document.body.style.overflow = '';
+    if (url) URL.revokeObjectURL(url);
+    v.remove();
+  };
+  const onKey = (e) => e.key === 'Escape' && close();
+  document.addEventListener('keydown', onKey);
+  v.cleanup = close; // the router calls this when you go to another page
+  $('[data-close]', v).onclick = close;
+  $('[data-dl]', v).onclick = async () => {
+    toast('Preparing download…', 0);
+    downloadToast(await downloadFiles([f]), 1);
+  };
+
+  const box = $('#vfile', v);
+  const kind = fileKind(f);
+  if (kind === 'other') {
+    box.innerHTML = `<div class="v-nopreview"><b>${esc(f.name)}</b><p>This type of file cannot be shown here. Download it to open it on your device.</p></div>`;
+    return;
+  }
+  try {
+    const buf = await tg.getFileData(f);
+    if (closed) return;
+    const mime = f.mime || (kind === 'pdf' ? 'application/pdf' : '');
+    if (kind === 'text') {
+      box.innerHTML = `<pre class="v-text">${esc(new TextDecoder().decode(buf))}</pre>`;
+      return;
+    }
+    url = URL.createObjectURL(new Blob([buf], { type: mime }));
+    if (kind === 'image') box.innerHTML = `<img class="v-img" alt="${esc(f.name)}" src="${url}" />`;
+    else if (kind === 'video') box.innerHTML = `<video class="v-media" controls autoplay src="${url}"></video>`;
+    else if (kind === 'audio') box.innerHTML = `<audio class="v-audio" controls autoplay src="${url}"></audio>`;
+    else
+      box.innerHTML = `<iframe class="v-frame" title="${esc(f.name)}" src="${url}"></iframe>
+<p class="v-hint">If the PDF does not appear on your phone, press Download and open it from there.</p>`;
+  } catch (err) {
+    if (!closed) box.innerHTML = `<div class="v-nopreview"><b>Could not load this file.</b><p>${esc(tg.friendlyError(err))}</p></div>`;
+  }
+}
 
 /* ---------- subfolder select used by the New and Edit forms ---------- */
 
