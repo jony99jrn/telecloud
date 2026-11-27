@@ -757,7 +757,7 @@ async function renderFolder(fid, entryId) {
 <button class="btn btn-light" id="newsub">${I.folder}New subfolder</button>
 <button class="btn btn-light" id="upfiles">${I.up}Upload files</button>
 <a class="btn" href="#/f/${fid}/new">${I.plus}Add entry</a></div></div>
-<input type="file" id="filepick" multiple hidden />
+<input type="file" id="filepick" multiple hidden accept="${UPLOAD_ACCEPT}" />
 <label class="searchbar">${I.search}<input id="q" placeholder="Search by title, question, tag or code" autocomplete="off" /></label>
 <div id="out"><div class="loading">Loading entries…</div></div>
 <div class="footer-actions"><button class="link-btn danger" id="delfolder">Move this folder to the Bin</button></div></div>
@@ -917,9 +917,9 @@ async function renderFolder(fid, entryId) {
     picks = [...picks];
     if (!picks.length || uploading) return;
     const target = cur ?? '';
-    const ok = picks.filter((f) => f.size > 0 && f.size <= tg.MAX_UPLOAD);
+    const ok = picks.filter((f) => canUpload(f) && f.size > 0 && f.size <= tg.MAX_UPLOAD);
     const skipped = picks.length - ok.length;
-    if (!ok.length) return toast('Files must be between 1 byte and 100 MB.');
+    if (!ok.length) return toast('Only code files and pictures can be uploaded (no PDFs), up to 100 MB each.');
     uploading = true;
     $('#upfiles').disabled = true;
     let done = 0;
@@ -946,7 +946,7 @@ async function renderFolder(fid, entryId) {
       toast(
         bad
           ? `Uploaded ${done} of ${ok.length}. ${bad} failed.`
-          : `Uploaded ${plural(done, 'file')}${dest}${skipped ? `. ${plural(skipped, 'file')} skipped (empty or over 100 MB).` : ''}`
+          : `Uploaded ${plural(done, 'file')}${dest}${skipped ? `. ${plural(skipped, 'file')} skipped (not code or a picture, empty, or over 100 MB).` : ''}`
       );
     }
     draw();
@@ -1060,7 +1060,7 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fope
     let html = '';
     const showSubCards = !q && cur === null && subs.length > 0;
     if (!entries.length && !files.length && !subs.length) {
-      $('#out').innerHTML = `<div class="empty">Nothing here yet. Tap “Add entry” to save your first code, or “Upload files” to add any file.</div>`;
+      $('#out').innerHTML = `<div class="empty">Nothing here yet. Tap “Add entry” to save your first code, or “Upload files” to add code files and pictures.</div>`;
       syncSel();
       return;
     }
@@ -1069,9 +1069,10 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fope
       if (showSubCards || visFiles.length) html += `<h2 class="section-title">Entries</h2>`;
       html += `<div class="grid">${visEntries.map((e) => entryCard(e, !!q)).join('')}</div>`;
     }
-    if (visFiles.length) {
-      html += `<h2 class="section-title">Files</h2><div class="grid">${visFiles.map((f) => fileCard(f, !!q)).join('')}</div>`;
-    }
+    const visCode = visFiles.filter((f) => !isImageFile(f));
+    const visImgs = visFiles.filter((f) => isImageFile(f));
+    if (visCode.length) html += `<h2 class="section-title">Code files</h2><div class="grid">${visCode.map((f) => fileCard(f, !!q)).join('')}</div>`;
+    if (visImgs.length) html += `<h2 class="section-title">Images</h2><div class="grid">${visImgs.map((f) => fileCard(f, !!q)).join('')}</div>`;
     if (visible.length) {
       /* cards are drawn above */
     } else if (q) {
@@ -1175,17 +1176,17 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fope
       c.classList.add('openable');
       c.onclick = (ev) => {
         if (selecting) act();
-        else if (!ev.target.closest('button')) openFileViewer(folder, f);
+        else if (!ev.target.closest('button')) openFileViewer(folder, f, draw);
       };
       c.onkeydown = (ev) => {
         if (ev.target === c && (ev.key === 'Enter' || ev.key === ' ')) {
           ev.preventDefault();
           if (selecting) act();
-          else openFileViewer(folder, f);
+          else openFileViewer(folder, f, draw);
         }
       };
       const op = $('[data-fopen]', c);
-      if (op) op.onclick = () => openFileViewer(folder, f);
+      if (op) op.onclick = () => openFileViewer(folder, f, draw);
       const dl = $('[data-fdl]', c);
       if (dl)
         dl.onclick = async () => {
@@ -1197,7 +1198,7 @@ ${selecting ? '' : `<div class="actions"><button class="btn btn-small" data-fope
         dots.onclick = (ev) => {
           ev.stopPropagation();
           openMenu(ev.currentTarget, [
-            { label: 'Open', icon: I.ext, fn: () => openFileViewer(folder, f) },
+            { label: 'Open', icon: I.ext, fn: () => openFileViewer(folder, f, draw) },
             {
               label: 'Download',
               icon: I.download,
@@ -1686,29 +1687,59 @@ ${hasSide ? `<button class="vbtn" data-side>Question${entry.shots.length ? ' & i
 
 /* ---------- open an uploaded file (full screen) ---------- */
 
-const TEXT_EXT = /\.(txt|md|csv|json|xml|log|c|h|cpp|hpp|java|py|js|ts|html|css|sql|sh|yml|yaml|ini|cfg|bat)$/i;
+const CODE_EXT = /\.(c|h|cpp|hpp|cc|cxx|java|py|js|jsx|ts|tsx|html|css|sql|cs|go|rs|php|kt|swift|rb|sh|bat|asm|json|xml|yml|yaml|txt|md|csv)$/i;
+const IMG_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+const isImageFile = (f) => (f.type || f.mime || '').toLowerCase().startsWith('image/') || IMG_EXT.test(f.name);
+// Uploads are limited to code files and pictures (no PDFs or other documents).
+const canUpload = (f) => CODE_EXT.test(f.name) || isImageFile(f);
+const UPLOAD_ACCEPT = '.c,.h,.cpp,.hpp,.cc,.java,.py,.js,.jsx,.ts,.tsx,.html,.css,.sql,.cs,.go,.rs,.php,.kt,.swift,.rb,.sh,.bat,.asm,.json,.xml,.yml,.yaml,.txt,.md,.csv,image/*';
+
 function fileKind(f) {
-  const m = (f.mime || '').toLowerCase();
-  const n = f.name.toLowerCase();
-  if (m.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(n)) return 'image';
-  if (m === 'application/pdf' || n.endsWith('.pdf')) return 'pdf';
-  if (m.startsWith('video/') || /\.(mp4|webm|mov|mkv)$/.test(n)) return 'video';
-  if (m.startsWith('audio/') || /\.(mp3|wav|ogg|m4a)$/.test(n)) return 'audio';
-  if ((m.startsWith('text/') || TEXT_EXT.test(n)) && f.size <= 2 * 1024 * 1024) return 'text';
+  if (isImageFile(f)) return 'image';
+  if (CODE_EXT.test(f.name) && f.size <= 2 * 1024 * 1024) return 'text';
   return 'other';
 }
 
-async function openFileViewer(folder, f) {
+// Which highlighter language fits a text file, by its extension.
+function langOfFile(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (ext === 'c' || ext === 'h') return 'C';
+  if (['cpp', 'hpp', 'cc', 'cxx'].includes(ext)) return 'C++';
+  if (ext === 'java') return 'Java';
+  if (ext === 'py') return 'Python';
+  if (ext === 'js' || ext === 'ts') return 'JavaScript';
+  if (ext === 'sql') return 'SQL';
+  if (ext === 'html' || ext === 'css') return 'HTML/CSS';
+  return 'Other';
+}
+
+// Opens an uploaded file full screen. Text and code files use the same look as the code viewer
+// (line numbers, colours, A-/A+, Copy all code). onChange() is called after the file is deleted.
+async function openFileViewer(folder, f, onChange) {
   document.querySelectorAll('.viewer').forEach((x) => x.remove());
+  const kind = fileKind(f);
+  const isText = kind === 'text';
+  const lang = langOfFile(f.name);
   const v = document.createElement('div');
   v.className = 'viewer';
   v.innerHTML = `<div class="v-head"><span class="ficon">${I.folder}</span>
-<div class="v-title"><b>${esc(f.name)}</b><small>${esc(folder.name)}${f.sub ? ' / ' + esc(f.sub) : ''} · ${fmtSize(f.size)} · ${fmtDate(f.ts)}</small></div>
-<div class="v-btns"><button class="vbtn primary" data-dl>${I.download}<span>Download</span></button>
+<div class="v-title"><b>${esc(f.name)}</b><small>${esc(folder.name)}${f.sub ? ' · ' + esc(f.sub) : ''} · ${fmtSize(f.size)} · ${fmtDate(f.ts)}</small></div>
+<span class="v-lang">${esc(isText && lang !== 'Other' ? BADGE[lang] : extBadge(f.name))}</span>
+<div class="v-btns">
+${isText ? `<button class="vbtn sq" data-minus aria-label="Smaller text">A−</button>
+<button class="vbtn sq" data-plus aria-label="Bigger text">A+</button>
+<button class="vbtn primary grow" data-copyall>${I.copy}<span>Copy all code</span></button>` : ''}
+<button class="vbtn sq" data-dl aria-label="Download file">${I.download}</button>
+<button class="vbtn sq" data-del aria-label="Move file to the Bin" title="Move to the Bin">${I.trash}</button>
 <button class="vbtn sq" data-close aria-label="Close">${I.x}</button></div></div>
-<div class="v-body"><div class="v-file" id="vfile"><div class="loading" style="color:#a8bbd0">Loading file…</div></div></div>`;
+<div class="v-body">${
+    isText
+      ? '<div class="v-code" id="vcode"><div class="loading" style="color:#a8bbd0">Loading file…</div></div>'
+      : '<div class="v-file" id="vfile"><div class="loading" style="color:#a8bbd0">Loading file…</div></div>'
+  }</div>`;
   document.body.appendChild(v);
   document.body.style.overflow = 'hidden';
+
   let url = null;
   let closed = false;
   const close = () => {
@@ -1727,28 +1758,49 @@ async function openFileViewer(folder, f) {
     toast('Preparing download…', 0);
     downloadToast(await downloadFiles([f]), 1);
   };
+  $('[data-del]', v).onclick = async () => {
+    const ok = await modal({ title: 'Move this file to the Bin?', text: 'You can restore it from the Bin any time.', confirm: 'Move to Bin' });
+    if (!ok) return;
+    try {
+      toast('Moving to the Bin…', 0);
+      await tg.binFile(folder, f);
+      toast('Moved to the Bin');
+      close();
+      onChange?.();
+    } catch (err) {
+      toast(tg.friendlyError(err));
+    }
+  };
 
-  const box = $('#vfile', v);
-  const kind = fileKind(f);
+  const box = $(isText ? '#vcode' : '#vfile', v);
   if (kind === 'other') {
-    box.innerHTML = `<div class="v-nopreview"><b>${esc(f.name)}</b><p>This type of file cannot be shown here. Download it to open it on your device.</p></div>`;
+    box.innerHTML = `<div class="v-nopreview"><b>${esc(f.name)}</b><p>This file is too big to show here. Download it to open it on your device.</p></div>`;
     return;
   }
   try {
     const buf = await tg.getFileData(f);
     if (closed) return;
-    const mime = f.mime || (kind === 'pdf' ? 'application/pdf' : '');
-    if (kind === 'text') {
-      box.innerHTML = `<pre class="v-text">${esc(new TextDecoder().decode(buf))}</pre>`;
+    if (isText) {
+      const text = new TextDecoder().decode(buf).replace(/\r\n/g, '\n');
+      let size = Number(localStorage.getItem('cv_code_size')) || 15;
+      const applySize = () => {
+        v.style.setProperty('--code-size', size + 'px');
+        localStorage.setItem('cv_code_size', String(size));
+      };
+      applySize();
+      $('[data-minus]', v).onclick = () => ((size = Math.max(10, size - 1)), applySize());
+      $('[data-plus]', v).onclick = () => ((size = Math.min(30, size + 1)), applySize());
+      $('[data-copyall]', v).onclick = async () => {
+        const ok = await copyText(text);
+        toast(ok ? 'All code copied' : 'Could not copy. Press and hold on the text to select it.');
+      };
+      box.innerHTML = highlightLines(text, lang)
+        .map((html, n) => `<div class="ln"><span class="no">${n + 1}</span><span class="tx">${html || ' '}</span></div>`)
+        .join('');
       return;
     }
-    url = URL.createObjectURL(new Blob([buf], { type: mime }));
-    if (kind === 'image') box.innerHTML = `<img class="v-img" alt="${esc(f.name)}" src="${url}" />`;
-    else if (kind === 'video') box.innerHTML = `<video class="v-media" controls autoplay src="${url}"></video>`;
-    else if (kind === 'audio') box.innerHTML = `<audio class="v-audio" controls autoplay src="${url}"></audio>`;
-    else
-      box.innerHTML = `<iframe class="v-frame" title="${esc(f.name)}" src="${url}"></iframe>
-<p class="v-hint">If the PDF does not appear on your phone, press Download and open it from there.</p>`;
+    url = URL.createObjectURL(new Blob([buf], { type: f.mime || 'image/jpeg' }));
+    box.innerHTML = `<img class="v-img" alt="${esc(f.name)}" src="${url}" />`;
   } catch (err) {
     if (!closed) box.innerHTML = `<div class="v-nopreview"><b>Could not load this file.</b><p>${esc(tg.friendlyError(err))}</p></div>`;
   }
