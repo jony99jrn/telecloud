@@ -566,3 +566,12 @@ h1.title { font-size: clamp(34px, 5vw, 46px); letter-spacing: -0.03em; margin: 3
 .folder.bin-card { min-height: 0; }
 .folder.bin-card:hover { transform: none; }
 .head-btns a.btn[href="#/bin"] { flex-basis: calc(50% - 5px); }
+
+/* ---------- uploaded files ---------- */
+.filecard h3 { overflow-wrap: anywhere; }
+.filecard .actions { display: flex; gap: 10px; margin-top: 16px; }
+.filecard .actions .btn { gap: 8px; }
+.filecard .actions .btn svg { width: 16px; height: 16px; }
+.selbar .btn.danger { color: #b3261e; }
+.shell.dragging { outline: 3px dashed var(--blue); outline-offset: -8px; border-radius: 24px; }
+@media (max-width: 700px) { .head-btns a.btn { flex-basis: calc(50% - 5px); } .head-btns a.btn[href="#/bin"] { flex-basis: calc(50% - 5px); } }
