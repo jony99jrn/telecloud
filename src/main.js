@@ -171,6 +171,35 @@ async function downloadEntries(list) {
   return ok;
 }
 
+const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B');
+const extBadge = (name) => (/\.[A-Za-z0-9]{1,5}$/.test(name) ? name.split('.').pop().toUpperCase() : 'FILE');
+
+function saveBlob(name, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 15000);
+}
+
+/** Downloads uploaded files with their own names. Returns how many worked. */
+async function downloadFiles(list) {
+  let ok = 0;
+  for (const f of list) {
+    try {
+      saveBlob(f.name, new Blob([await tg.getFileData(f)], { type: f.mime || 'application/octet-stream' }));
+      ok++;
+      if (list.length > 1) await new Promise((r) => setTimeout(r, 400));
+    } catch (err) {
+      /* counted as not downloaded */
+    }
+  }
+  return ok;
+}
+
 const downloadToast = (ok, total) =>
   toast(ok === total ? (total === 1 ? 'Downloaded' : `Downloaded ${total} files`) : ok ? `Downloaded ${ok} of ${total} files` : 'Could not download. Check your connection.');
 
@@ -717,6 +746,8 @@ async function renderFolder(fid, entryId) {
   let selecting = false;
   const picked = new Set();
   let visible = [];
+  let gone = false;
+  let uploading = false;
 
   app.innerHTML = `<div class="shell">${header()}
 <a class="back" id="backlink" href="#/">${I.back}All folders</a>
@@ -724,7 +755,9 @@ async function renderFolder(fid, entryId) {
 <div><h1 id="ftitle">${esc(folder.name)}</h1><p id="count">Stored in a private Telegram channel.</p></div></div>
 <div class="head-btns"><button class="btn btn-light" id="selbtn">${I.check}Select</button>
 <button class="btn btn-light" id="newsub">${I.folder}New subfolder</button>
+<button class="btn btn-light" id="upfiles">${I.up}Upload files</button>
 <a class="btn" href="#/f/${fid}/new">${I.plus}Add entry</a></div></div>
+<input type="file" id="filepick" multiple hidden />
 <label class="searchbar">${I.search}<input id="q" placeholder="Search by title, question, tag or code" autocomplete="off" /></label>
 <div id="out"><div class="loading">Loading entries…</div></div>
 <div class="footer-actions"><button class="link-btn danger" id="delfolder">Move this folder to the Bin</button></div></div>
@@ -732,9 +765,11 @@ async function renderFolder(fid, entryId) {
 <div class="btns"><button class="btn btn-light btn-small" id="selall">Select all</button>
 <button class="btn btn-small" id="seldl">${I.download}Download</button>
 <button class="btn btn-small" id="selmove">${I.folder}Move</button>
+<button class="btn btn-light btn-small danger" id="seldel">${I.trash}Delete</button>
 <button class="btn btn-light btn-small" id="selcancel">Cancel</button></div></div>`;
   bindShared(app);
   S.cleanup = () => {
+    gone = true;
     closeMenu();
     const bar = $('#selbar');
     if (bar) bar.remove();
@@ -766,6 +801,7 @@ async function renderFolder(fid, entryId) {
     return;
   }
   const entries = S.entries[fid];
+  const files = tg.filesOf(fid); // uploaded files of this folder (changed in place)
 
   let codesLoading = null;
   const loadCodes = () =>
@@ -795,6 +831,7 @@ async function renderFolder(fid, entryId) {
     $('#selcount').textContent = `${picked.size} selected`;
     $('#selmove').disabled = !picked.size;
     $('#seldl').disabled = !picked.size;
+    $('#seldel').disabled = !picked.size;
     $('#selall').textContent = picked.size && picked.size === visible.length ? 'Clear' : 'Select all';
     $('#selbtn').innerHTML = selecting ? `${I.x}Done` : `${I.check}Select`;
     $('#out').classList.toggle('pad-sel', selecting);
@@ -812,14 +849,14 @@ async function renderFolder(fid, entryId) {
     const subs = tg.listSubs(fid, entries);
     const here = list.every((e) => e.sub === list[0].sub) ? list[0].sub : '';
     const target = await pickSub({
-      title: list.length === 1 ? 'Move to subfolder' : `Move ${list.length} entries`,
-      text: 'Only the caption of each entry changes. Your code, questions and screenshots stay as they are.',
+      title: list.length === 1 ? 'Move to subfolder' : `Move ${list.length} items`,
+      text: 'Only the caption of each item changes. Your code, questions, screenshots and files stay as they are.',
       subs,
       current: here,
     });
     if (target === null) return;
     try {
-      toast(`Moving ${list.length === 1 ? 'entry' : 'entries'}…`, 0);
+      toast(`Moving ${list.length === 1 ? 'item' : 'items'}…`, 0);
       await tg.moveEntries(folder, list, target, (d, t) => t > 1 && toast(`Moving ${d} of ${t}…`, 0));
       toast(target ? `Moved to “${target}”` : 'Moved to the main folder');
       if (selecting) {
@@ -848,6 +885,73 @@ async function renderFolder(fid, entryId) {
     draw();
   };
 
+  const deleteFile = async (f) => {
+    const ok = await modal({ title: 'Move this file to the Bin?', text: 'You can restore it from the Bin any time.', confirm: 'Move to Bin' });
+    if (!ok) return;
+    try {
+      toast('Moving to the Bin…', 0);
+      await tg.binFile(folder, f);
+      picked.delete(f.id);
+      toast('Moved to the Bin');
+    } catch (err) {
+      toast(tg.friendlyError(err));
+    }
+    draw();
+  };
+
+  const renameFile = async (f) => {
+    const name = await modal({ title: 'Rename file', input: true, placeholder: f.name, confirm: 'Rename' });
+    if (!name || name === f.name) return;
+    try {
+      toast('Renaming…', 0);
+      await tg.renameFile(folder, f, name);
+      toast('Renamed');
+    } catch (err) {
+      toast(tg.friendlyError(err));
+    }
+    draw();
+  };
+
+  // Uploads the picked files into the folder you are looking at (or the open subfolder).
+  const uploadFiles = async (picks) => {
+    picks = [...picks];
+    if (!picks.length || uploading) return;
+    const target = cur ?? '';
+    const ok = picks.filter((f) => f.size > 0 && f.size <= tg.MAX_UPLOAD);
+    const skipped = picks.length - ok.length;
+    if (!ok.length) return toast('Files must be between 1 byte and 100 MB.');
+    uploading = true;
+    $('#upfiles').disabled = true;
+    let done = 0;
+    let bad = 0;
+    for (const file of ok) {
+      const label = ok.length > 1 ? ` ${done + bad + 1} of ${ok.length}` : '';
+      try {
+        await tg.addFile(folder, file, target, {
+          onStatus: (t) => !gone && toast(t, 0),
+          onProgress: (p) => !gone && toast(`Uploading${label}… ${Math.round(p * 100)}%`, 0),
+        });
+        done++;
+        if (!gone) draw();
+      } catch (err) {
+        bad++;
+        if (!gone && ok.length === 1) toast(tg.friendlyError(err));
+      }
+    }
+    uploading = false;
+    if (gone) return;
+    $('#upfiles').disabled = false;
+    if (ok.length > 1 || !bad) {
+      const dest = target ? ` to “${target}”` : '';
+      toast(
+        bad
+          ? `Uploaded ${done} of ${ok.length}. ${bad} failed.`
+          : `Uploaded ${plural(done, 'file')}${dest}${skipped ? `. ${plural(skipped, 'file')} skipped (empty or over 100 MB).` : ''}`
+      );
+    }
+    draw();
+  };
+
   const subMenu = (btn, name) =>
     openMenu(btn, [
       {
@@ -858,7 +962,7 @@ async function renderFolder(fid, entryId) {
           if (!next || next === name) return;
           try {
             toast('Renaming…', 0);
-            await tg.moveEntries(folder, entries.filter((e) => inSub(e, name)), next);
+            await tg.moveEntries(folder, [...entries, ...files].filter((e) => inSub(e, name)), next);
             tg.removeLocalSub(fid, name);
             tg.addLocalSub(fid, next);
             toast('Subfolder renamed');
@@ -875,13 +979,13 @@ async function renderFolder(fid, entryId) {
         fn: async () => {
           const ok = await modal({
             title: `Remove “${name}”?`,
-            text: 'Its entries are not deleted. They move back to the main folder.',
+            text: 'Its entries and files are not deleted. They move back to the main folder.',
             confirm: 'Remove',
           });
           if (!ok) return;
           try {
             toast('Removing…', 0);
-            await tg.moveEntries(folder, entries.filter((e) => inSub(e, name)), '');
+            await tg.moveEntries(folder, [...entries, ...files].filter((e) => inSub(e, name)), '');
             tg.removeLocalSub(fid, name);
             toast('Subfolder removed');
           } catch (err) {
@@ -894,9 +998,11 @@ async function renderFolder(fid, entryId) {
 
   const subCard = (name, i) => {
     const n = entries.filter((e) => inSub(e, name)).length;
+    const nf = files.filter((e) => inSub(e, name)).length;
+    const meta = [n ? entriesWord(n) : '', nf ? plural(nf, 'file') : ''].filter(Boolean).join(' · ') || 'Empty';
     return `<div class="card folder subcard" data-sub="${i}" tabindex="0" role="link">
 <div class="row"><span class="ficon">${I.folder}</span><button type="button" class="dots" data-subdots="${i}" aria-label="Subfolder options">${I.dots}</button></div>
-<div class="info"><h3>${esc(name)}</h3><div class="meta">${n ? entriesWord(n) : 'Empty'}</div></div><span class="chev">${I.chev}</span></div>`;
+<div class="info"><h3>${esc(name)}</h3><div class="meta">${meta}</div></div><span class="chev">${I.chev}</span></div>`;
   };
 
   const entryCard = (e, showSub) => `<div class="card entry${selecting ? ' selectable' : ''}${picked.has(e.id) ? ' picked' : ''}" data-id="${e.id}">
@@ -912,6 +1018,13 @@ ${
 <a class="btn btn-light btn-small" href="#/f/${fid}/edit/${e.id}">${I.edit}Edit</a>
 ${e.solutions > 1 ? '' : `<button class="btn btn-small" data-copy="${e.id}">${I.copy}Copy </button>`}</div>`
 }</div>`;
+
+  const fileCard = (f, showSub) => `<div class="card entry filecard${selecting ? ' selectable' : ''}${picked.has(f.id) ? ' picked' : ''}" data-fid="${f.id}">
+<div class="row"><span class="badge">${esc(extBadge(f.name))}</span><span class="date">${fmtDate(f.ts)}</span>
+${selecting ? `<span class="chk" aria-hidden="true">${I.check}</span>` : `<button type="button" class="dots" data-fdots="${f.id}" aria-label="More options">${I.dots}</button>`}</div>
+<h3>${esc(f.name)}</h3>
+<div class="meta">${fmtSize(f.size)}${showSub && f.sub ? ` · <span class="subchip">${I.folder}${esc(f.sub)}</span>` : ''}</div>
+${selecting ? '' : `<div class="actions"><button class="btn btn-light btn-small" data-fdl="${f.id}">${I.download}Download</button></div>`}</div>`;
 
   function draw() {
     closeMenu();
@@ -933,28 +1046,37 @@ ${e.solutions > 1 ? '' : `<button class="btn btn-small" data-copy="${e.id}">${I.
     $('#count').textContent =
       cur !== null
         ? `Subfolder of ${folder.name}.`
-        : `${entriesWord(entries.length)}${subs.length ? ' · ' + plural(subs.length, 'subfolder') : ''}. Stored in a private Telegram channel.`;
+        : `${entriesWord(entries.length)}${files.length ? ' · ' + plural(files.length, 'file') : ''}${subs.length ? ' · ' + plural(subs.length, 'subfolder') : ''}. Stored in a private Telegram channel.`;
     $('#newsub').hidden = cur !== null;
     const addLink = $('.head-btns a.btn');
     addLink.href = `#/f/${fid}/new`;
 
-    visible = q ? entries.filter((e) => matches(e, q)) : cur === null ? entries.filter((e) => !e.sub) : entries.filter((e) => inSub(e, cur));
+    const pick = (list, test) => (q ? list.filter(test) : cur === null ? list.filter((e) => !e.sub) : list.filter((e) => inSub(e, cur)));
+    const visEntries = pick(entries, (e) => matches(e, q));
+    const visFiles = pick(files, (f) => f.name.toLowerCase().includes(q));
+    visible = [...visEntries, ...visFiles];
 
     let html = '';
     const showSubCards = !q && cur === null && subs.length > 0;
-    if (!entries.length && !subs.length) {
-      $('#out').innerHTML = `<div class="empty">Nothing here yet. Tap “Add entry” to save your first code.</div>`;
+    if (!entries.length && !files.length && !subs.length) {
+      $('#out').innerHTML = `<div class="empty">Nothing here yet. Tap “Add entry” to save your first code, or “Upload files” to add any file.</div>`;
       syncSel();
       return;
     }
     if (showSubCards) html += `<h2 class="section-title">Subfolders</h2><div class="grid">${subs.map(subCard).join('')}</div>`;
+    if (visEntries.length) {
+      if (showSubCards || visFiles.length) html += `<h2 class="section-title">Entries</h2>`;
+      html += `<div class="grid">${visEntries.map((e) => entryCard(e, !!q)).join('')}</div>`;
+    }
+    if (visFiles.length) {
+      html += `<h2 class="section-title">Files</h2><div class="grid">${visFiles.map((f) => fileCard(f, !!q)).join('')}</div>`;
+    }
     if (visible.length) {
-      if (showSubCards) html += `<h2 class="section-title">Entries</h2>`;
-      html += `<div class="grid">${visible.map((e) => entryCard(e, !!q)).join('')}</div>`;
+      /* cards are drawn above */
     } else if (q) {
-      html += `<div class="empty">No entries match “${esc(q)}”.</div>`;
+      html += `<div class="empty">Nothing matches “${esc(q)}”.</div>`;
     } else if (cur !== null) {
-      html += `<div class="empty">This subfolder is empty. Select entries in the folder and move them here, or tap “Add entry”.</div>`;
+      html += `<div class="empty">This subfolder is empty. Tap “Upload files” or “Add entry”, or select items in the folder and move them here.</div>`;
     }
     $('#out').innerHTML = html;
 
@@ -986,7 +1108,7 @@ ${e.solutions > 1 ? '' : `<button class="btn btn-small" data-copy="${e.id}">${I.
     });
 
     // entry cards: the whole card opens the entry, or toggles the tick in select mode
-    $('#out').querySelectorAll('.entry').forEach((c) => {
+    $('#out').querySelectorAll('.entry:not(.filecard)').forEach((c) => {
       const e = entries.find((x) => x.id === c.dataset.id);
       if (!e) return;
       const act = () => {
@@ -1036,6 +1158,63 @@ ${e.solutions > 1 ? '' : `<button class="btn btn-small" data-copy="${e.id}">${I.
         };
     });
 
+    // file cards: tick in select mode, otherwise Download and the three-dot menu
+    $('#out').querySelectorAll('.filecard').forEach((c) => {
+      const f = files.find((x) => x.id === c.dataset.fid);
+      if (!f) return;
+      c.tabIndex = 0;
+      c.setAttribute('role', selecting ? 'checkbox' : 'group');
+      if (selecting) c.setAttribute('aria-checked', picked.has(f.id) ? 'true' : 'false');
+      const act = () => {
+        if (picked.has(f.id)) picked.delete(f.id);
+        else picked.add(f.id);
+        c.classList.toggle('picked', picked.has(f.id));
+        syncSel();
+      };
+      c.onclick = (ev) => {
+        if (selecting) act();
+      };
+      c.onkeydown = (ev) => {
+        if (selecting && ev.target === c && (ev.key === 'Enter' || ev.key === ' ')) {
+          ev.preventDefault();
+          act();
+        }
+      };
+      const dl = $('[data-fdl]', c);
+      if (dl)
+        dl.onclick = async () => {
+          toast('Preparing download…', 0);
+          downloadToast(await downloadFiles([f]), 1);
+        };
+      const dots = $('[data-fdots]', c);
+      if (dots)
+        dots.onclick = (ev) => {
+          ev.stopPropagation();
+          openMenu(ev.currentTarget, [
+            {
+              label: 'Download',
+              icon: I.download,
+              fn: async () => {
+                toast('Preparing download…', 0);
+                downloadToast(await downloadFiles([f]), 1);
+              },
+            },
+            { label: 'Rename', icon: I.edit, fn: () => renameFile(f) },
+            { label: 'Move to subfolder', icon: I.folder, fn: () => moveFlow([f]) },
+            {
+              label: 'Select',
+              icon: I.check,
+              fn: () => {
+                selecting = true;
+                picked.add(f.id);
+                draw();
+              },
+            },
+            { label: 'Move to Bin', icon: I.trash, danger: true, fn: () => deleteFile(f) },
+          ]);
+        };
+    });
+
     $('#out').querySelectorAll('[data-copy]').forEach((b) => {
       b.onclick = () => copyEntry(entries.find((x) => x.id === b.dataset.copy));
     });
@@ -1053,16 +1232,83 @@ ${e.solutions > 1 ? '' : `<button class="btn btn-small" data-copy="${e.id}">${I.
     else visible.forEach((e) => picked.add(e.id));
     draw();
   };
-  $('#selmove').onclick = () => moveFlow(entries.filter((e) => picked.has(e.id)));
+  const pickedItems = () => [...entries.filter((e) => picked.has(e.id)), ...files.filter((f) => picked.has(f.id))];
+  $('#selmove').onclick = () => moveFlow(pickedItems());
   $('#seldl').onclick = async () => {
-    const list = entries.filter((e) => picked.has(e.id));
-    if (!list.length) return;
+    const es = entries.filter((e) => picked.has(e.id));
+    const fs = files.filter((f) => picked.has(f.id));
+    const total = es.length + fs.length;
+    if (!total) return;
     const btn = $('#seldl');
     btn.disabled = true;
-    toast(list.length === 1 ? 'Preparing download…' : `Preparing ${list.length} files…`, 0);
-    const ok = await downloadEntries(list);
-    downloadToast(ok, list.length);
+    toast(total === 1 ? 'Preparing download…' : `Preparing ${total} files…`, 0);
+    const ok = (es.length ? await downloadEntries(es) : 0) + (fs.length ? await downloadFiles(fs) : 0);
+    downloadToast(ok, total);
     btn.disabled = !picked.size;
+  };
+  // Delete: moves every ticked entry and file to the Bin (nothing is lost, the Bin can restore them)
+  $('#seldel').onclick = async () => {
+    const es = entries.filter((e) => picked.has(e.id));
+    const fs = files.filter((f) => picked.has(f.id));
+    const total = es.length + fs.length;
+    if (!total) return;
+    const ok = await modal({
+      title: total === 1 ? 'Move 1 item to the Bin?' : `Move ${total} items to the Bin?`,
+      text: 'Nothing is deleted yet. You can restore them from the Bin any time.',
+      confirm: 'Move to Bin',
+    });
+    if (!ok) return;
+    let n = 0;
+    let bad = 0;
+    for (const e of es) {
+      toast(`Moving ${++n} of ${total}…`, 0);
+      try {
+        await tg.binEntry(folder, e);
+        entries.splice(entries.indexOf(e), 1);
+        picked.delete(e.id);
+      } catch (err) {
+        bad++;
+      }
+    }
+    for (const f of fs) {
+      toast(`Moving ${++n} of ${total}…`, 0);
+      try {
+        await tg.binFile(folder, f);
+        picked.delete(f.id);
+      } catch (err) {
+        bad++;
+      }
+    }
+    folder.count = entries.length;
+    if (gone) return;
+    toast(bad ? `Moved ${total - bad} of ${total}. ${bad} could not be moved.` : 'Moved to the Bin');
+    if (!bad) {
+      selecting = false;
+      picked.clear();
+    }
+    draw();
+  };
+  $('#upfiles').onclick = () => $('#filepick').click();
+  $('#filepick').onchange = (ev) => {
+    const picks = [...ev.target.files];
+    ev.target.value = '';
+    uploadFiles(picks);
+  };
+  // drag files onto the page (computers)
+  const shell = $('.shell');
+  shell.ondragover = (ev) => {
+    if (![...(ev.dataTransfer?.types || [])].includes('Files')) return;
+    ev.preventDefault();
+    shell.classList.add('dragging');
+  };
+  shell.ondragleave = (ev) => {
+    if (!shell.contains(ev.relatedTarget)) shell.classList.remove('dragging');
+  };
+  shell.ondrop = (ev) => {
+    if (![...(ev.dataTransfer?.types || [])].includes('Files')) return;
+    ev.preventDefault();
+    shell.classList.remove('dragging');
+    uploadFiles(ev.dataTransfer.files);
   };
   $('#newsub').onclick = async () => {
     const name = tg.cleanSub(
@@ -1117,6 +1363,19 @@ async function renderBin() {
     return out.sort((a, b) => b.e.deletedAt - a.e.deletedAt);
   };
 
+  const binFiles = () => {
+    const out = [];
+    for (const f of S.folders) for (const x of tg.binFilesOf(f.id) || []) out.push({ f, x });
+    return out.sort((a, b) => b.x.deletedAt - a.x.deletedAt);
+  };
+
+  const binFileCard = ({ f, x }) => `<div class="card entry bin-card">
+<div class="row"><span class="badge">${esc(extBadge(x.name))}</span><span class="date">Deleted ${fmtDate(x.deletedAt)}</span></div>
+<h3>${esc(x.name)}</h3>
+<div class="meta">${esc(f.name)} · ${fmtSize(x.size)}</div>
+<div class="actions"><button class="btn btn-small" data-act="rx" data-f="${f.id}" data-x="${x.id}">Restore</button>
+<button class="btn btn-light btn-small danger" data-act="dx" data-f="${f.id}" data-x="${x.id}">Delete forever</button></div></div>`;
+
   const binFolderCard = (f) => `<div class="card folder bin-card">
 <div class="row"><span class="ficon">${I.folder}</span><span class="badge">Folder</span></div>
 <div class="info"><h3>${esc(f.name)}</h3><div class="meta">Everything inside it is kept</div></div>
@@ -1135,13 +1394,15 @@ async function renderBin() {
     if (gone || !out) return;
     const folders = tg.getBinFolders();
     const entries = binEntries();
-    $('#emptybin').hidden = !(folders.length || entries.length);
+    const files = binFiles();
+    $('#emptybin').hidden = !(folders.length || entries.length || files.length);
     let html = '';
     if (folders.length) html += `<h2 class="section-title">Folders</h2><div class="grid">${folders.map(binFolderCard).join('')}</div>`;
     if (entries.length) html += `<h2 class="section-title">Entries</h2><div class="grid">${entries.map(binEntryCard).join('')}</div>`;
+    if (files.length) html += `<h2 class="section-title">Files</h2><div class="grid">${files.map(binFileCard).join('')}</div>`;
     if (loading) html += `<div class="loading">${esc(progress)}</div>`;
     else {
-      if (!folders.length && !entries.length) html = `<div class="empty">The Bin is empty. Folders and entries you delete show up here.</div>`;
+      if (!folders.length && !entries.length && !files.length) html = `<div class="empty">The Bin is empty. Folders, entries and files you delete show up here.</div>`;
       if (failed) html += `<div class="empty">Could not check ${plural(failed, 'folder')} for deleted entries. Open the Bin again to retry.</div>`;
     }
     out.innerHTML = html;
@@ -1193,6 +1454,25 @@ async function renderBin() {
       });
     }
 
+    if (act === 'rx' || act === 'dx') {
+      const f = S.folders.find((x) => x.id === b.dataset.f);
+      const x = f && (tg.binFilesOf(f.id) || []).find((y) => y.id === b.dataset.x);
+      if (!x) return;
+      if (act === 'rx')
+        return run(async () => {
+          toast('Restoring file…', 0);
+          await tg.restoreFile(f, x);
+          toast('File restored');
+        });
+      return run(async () => {
+        const ok = await modal({ title: 'Delete this file forever?', text: 'It is removed from your Telegram channel and cannot be recovered.', confirm: 'Delete forever' });
+        if (!ok) return;
+        toast('Deleting…', 0);
+        await tg.deleteFile(f, x);
+        toast('File deleted forever');
+      });
+    }
+
     const f = S.folders.find((x) => x.id === b.dataset.f);
     const e = f && findBinEntry(f.id, b.dataset.e);
     if (!e) return;
@@ -1222,9 +1502,10 @@ async function renderBin() {
     run(async () => {
       const folders = [...tg.getBinFolders()];
       const entries = binEntries();
+      const files = binFiles();
       const typed = await modal({
         title: 'Empty the Bin?',
-        text: `This permanently deletes ${plural(folders.length, 'folder')} and ${plural(entries.length, 'entry').replace('entrys', 'entries')} from Telegram. It cannot be undone. Type “empty” to confirm.`,
+        text: `This permanently deletes ${plural(folders.length, 'folder')}, ${plural(entries.length, 'entry').replace('entrys', 'entries')} and ${plural(files.length, 'file')} from Telegram. It cannot be undone. Type “empty” to confirm.`,
         input: true,
         placeholder: 'empty',
         confirm: 'Delete forever',
@@ -1233,7 +1514,15 @@ async function renderBin() {
       if (typed.toLowerCase() !== 'empty') return toast('Nothing was deleted.');
       let bad = 0;
       let n = 0;
-      const total = folders.length + entries.length;
+      const total = folders.length + entries.length + files.length;
+      for (const { f, x } of files) {
+        toast(`Deleting ${++n} of ${total}…`, 0);
+        try {
+          await tg.deleteFile(f, x);
+        } catch (err) {
+          bad++;
+        }
+      }
       for (const { f, e } of entries) {
         toast(`Deleting ${++n} of ${total}…`, 0);
         try {
